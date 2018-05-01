@@ -1,8 +1,8 @@
-{-# LANGUAGE KindSignatures    #-}
-{-# LANGUAGE ScopedTypeVariables    #-}
-{-# LANGUAGE TupleSections    #-}
-{-# LANGUAGE TypeApplications  #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE KindSignatures      #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
+{-# LANGUAGE TypeApplications    #-}
 
 {-|
 Description : Allowed effects for interacting with Nar files.
@@ -10,19 +10,20 @@ Maintainer  : Shea Levy <shea@shealevy.com>
 |-}
 module System.Nix.Nar where
 
-import           Control.Monad (replicateM, replicateM_)
-import           Data.Monoid ((<>))
 import           Control.Applicative
+import           Control.Monad              (replicateM, replicateM_)
+import qualified Data.Binary                as B
+import qualified Data.Binary.Get            as B
+import qualified Data.Binary.Put            as B
 import qualified Data.ByteString.Lazy.Char8 as BSL
-import qualified Data.Set as Set
-import qualified Data.Binary as B
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as E
-import qualified Data.Binary.Put as B
-import qualified Data.Binary.Get as B
-import           Debug.Trace
+import           Data.Maybe                 (fromMaybe)
+import           Data.Monoid                ((<>))
+import qualified Data.Set                   as Set
+import qualified Data.Text                  as T
+import qualified Data.Text.Encoding         as E
+import           GHC.Int                    (Int64)
 
-import System.Nix.Path
+import           System.Nix.Path
 
 
 data NarEffects (m :: * -> *) = NarEffets {
@@ -57,125 +58,112 @@ instance Ord FileSystemObject where
 data IsExecutable = NonExecutable | Executable
     deriving (Eq, Show)
 
--- data NarFile = NarFile
---     { narFileIsExecutable :: IsExecutable
---     , narFilePath         :: FilePath -- TODO: Correct type?
---     } deriving (Show)
 
-data DebugPut = PutAscii | PutBinary
-
+------------------------------------------------------------------------------
+-- | Serialize Nar to lazy ByteString
 putNar :: Nar -> B.Put
-putNar = putNar' PutBinary
-
-putNar' :: DebugPut -> Nar -> B.Put
-putNar' dbg (Nar file) = header <>
-                         parens (putFile file)
+putNar (Nar file) = header <>
+                    parens (putFile file)
     where
 
-        str' = case dbg of
-            PutAscii -> strDebug
-            PutBinary -> str
-
-        header   = str' "nix-archive-1"
-        parens m = str' "(" <> m <> str ")"
+        header   = str "nix-archive-1"
 
         putFile (Regular isExec contents) =
-               str' "type" <> str' "regular"
-            <> if isExec == Executable
-               then str' "executable" <> str' ""
-               else str' ""
-            <> str' "contents" <> str' contents
+               str "type" >> str "regular"
+            >> (if isExec == Executable
+               then str "executable" <> str ""
+               else return ())
+            >> str "contents" <> str contents
 
         putFile (SymLink target) =
-               str' "type" <> str' "symlink" <> str' "target" <> str' target
+               str "type" >> str "symlink" >> str "target" >> str target
 
         putFile (Directory entries) =
-               str' "type" <> str' "directory"
+               str "type" <> str "directory"
             <> foldMap putEntry entries
 
         putEntry (PathName name, fso) =
-            str' "entry" <>
-            parens (str' "name" <>
-                    str' (BSL.fromStrict $ E.encodeUtf8 name) <>
-                    str' "node" <>
-                    putFile fso)
+            str "entry" <>
+            parens (str "name" <>
+                    str (BSL.fromStrict $ E.encodeUtf8 name) <>
+                    str "node" <>
+                    parens (putFile fso))
 
+        parens m = str "(" >> m >> str ")"
+
+        str :: BSL.ByteString -> B.Put
+        str t = let len = BSL.length t
+            in int len <> pad t
+
+        int :: Integral a => a -> B.Put
+        int n = B.putInt64le $ fromIntegral n
+
+        pad :: BSL.ByteString -> B.Put
+        pad bs = do
+          B.putLazyByteString bs
+          B.putLazyByteString (BSL.replicate (padLen (BSL.length bs)) '\NUL')
+
+
+------------------------------------------------------------------------------
+-- | Deserialize a Nar from lazy ByteString
 getNar :: B.Get Nar
 getNar = fmap Nar $ header >> parens getFile
-    where header   = trace "header " $ assertStr "nix-archive-1"
+    where
 
-          padLen n = let r = n `mod` 8
-                         p = (8 - n) `mod` 8
-                     in trace ("padLen: " ++ show p) p
+      header   = assertStr "nix-archive-1"
 
-          str = do
-              n <- fmap fromIntegral B.getInt64le
-              s <- B.getLazyByteString n
-              p <- B.getByteString (padLen $ fromIntegral n)
-              traceShow (n,s) $ return s
 
-          assertStr s = trace ("Assert " ++ show s) $ do
-              s' <- str
-              if s == s'
-                  then trace ("Assert " ++ show s ++ " passed") (return s)
-                  else trace ("Assert " ++ show s ++ " failed") (fail "No")
+      -- Fetch a FileSystemObject
+      getFile = getRegularFile <|> getDirectory <|> getSymLink
 
-          parens m = assertStr "(" *> m <* assertStr ")"
+      getRegularFile = do
+          assertStr "type"
+          assertStr "regular"
+          mExecutable <- optional $ Executable <$ (assertStr "executable"
+                                                   >> assertStr "")
+          assertStr "contents"
+          contents <- str
+          return $ Regular (fromMaybe NonExecutable mExecutable) contents
 
-          getFile :: B.Get FileSystemObject
-          getFile = trace "getFile" (getRegularFile)
-                <|> trace "getDir" (getDirectory)
-                <|> trace "getLink" (getSymLink)
+      getDirectory = do
+          assertStr "type"
+          assertStr "directory"
+          fs <- many getEntry
+          return $ Directory (Set.fromList fs)
 
-          getRegularFile = trace "regular" $ do
-              trace "TESTING" (assertStr "type")
-              trace "HI" $ assertStr "regular"
-              trace "HI AGOIN" $ assertStr "contents"
-              contents <- str
-              return $ Regular (maybe NonExecutable
-                                   (const Executable) Nothing) contents
+      getSymLink = do
+          assertStr "type"
+          assertStr "symlink"
+          assertStr "target"
+          fmap SymLink str
 
-          getDirectory = do
-              assertStr "type"
-              assertStr "directory"
-              fs <- many getEntry
-              return $ Directory (Set.fromList fs)
+      getEntry = do
+          assertStr "entry"
+          parens $ do
+              assertStr "name"
+              mname <- E.decodeUtf8 . BSL.toStrict <$> str
+              assertStr "node"
+              file <- parens getFile
+              maybe (fail $ "Bad PathName: " ++ show mname)
+                    (return . (,file))
+                    (pathName mname)
 
-          getSymLink = do
-              assertStr "type"
-              assertStr "symlink"
-              assertStr "target"
-              fmap SymLink str
+      -- Fetch a length-prefixed, null-padded string
+      str = do
+          n <- B.getInt64le
+          s <- B.getLazyByteString n
+          p <- B.getByteString . fromIntegral $ padLen n
+          return s
 
-          getEntry = do
-              assertStr "entry"
-              parens $ do
-                  assertStr "name"
-                  mname <- pathName . E.decodeUtf8 . BSL.toStrict <$> str
-                  assertStr "node"
-                  file <- parens getFile
-                  maybe (fail "Bad PathName") (return . (,file)) mname
+      parens m = assertStr "(" *> m <* assertStr ")"
 
-str :: BSL.ByteString -> B.Put
-str t = let len = BSL.length t
-    in int len <> pad t
+      assertStr s = do
+          s' <- str
+          if s == s'
+              then return s
+              else fail "No"
 
-int :: Integral a => a -> B.Put
-int n = B.putInt64le $ fromIntegral n
 
-pad :: BSL.ByteString -> B.Put
-pad bs =
-    let padLen = BSL.length bs `div` 8
-    in  B.put bs >> B.put (BSL.replicate padLen '\NUL')
-
-strDebug :: BSL.ByteString -> B.Put
-strDebug t = let len = BSL.length t
-    in intDebug len <> padDebug t
-
-intDebug :: Integral a => a -> B.Put
-intDebug a = B.put (show @Int (fromIntegral a))
-
-padDebug :: BSL.ByteString -> B.Put
-padDebug bs =
-    let padLen = BSL.length bs `div` 8
-    in  B.put bs >> B.put (BSL.replicate padLen '_')
+-- | Distance to the next multiple of 8
+padLen :: Int64 -> Int64
+padLen n = (8 - n) `mod` 8
