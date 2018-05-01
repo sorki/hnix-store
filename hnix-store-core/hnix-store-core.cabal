@@ -40,6 +40,7 @@ test-suite format-tests
    build-depends:
        hnix-store-core
      , base
+     , base64-bytestring
      , binary
      , bytestring
      , containers
