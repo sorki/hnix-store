@@ -2,16 +2,16 @@
 
 module Nar where
 
-import Data.Maybe (isJust)
-import Data.Binary.Put (Put(..), runPut)
+import           Data.Binary.Get             (Get (..), runGet)
+import           Data.Binary.Put             (Put (..), runPut)
 import qualified Data.ByteString.Base64.Lazy as B64
-import Data.Binary.Get (Get(..), runGet)
-import qualified Data.ByteString.Lazy as BSL
-import qualified Data.Set as Set
-import Test.Tasty.Hspec
+import qualified Data.ByteString.Lazy        as BSL
+import qualified Data.Map                    as Map
+import           Data.Maybe                  (isJust)
+import           Test.Tasty.Hspec
 
-import System.Nix.Nar
-import System.Nix.Path
+import           System.Nix.Nar
+import           System.Nix.Path
 
 
 
@@ -84,10 +84,25 @@ sampleSymLink = SymLink "hello.c"
 
 -- | A directory that includes some of the above sample files
 sampleDirectory :: FileSystemObject
-sampleDirectory = Directory $ Set.fromList
+sampleDirectory = Directory $ Map.fromList
   [(PathName "hello.c", sampleRegular')
   ,(PathName "build.sh", sampleExecutable)
   ,(PathName "hi.c", sampleSymLink)
+  ]
+
+-- | A deeper directory tree with crossing links
+sampleDirectory' :: FileSystemObject
+sampleDirectory' = Directory $ Map.fromList [
+
+    (PathName "foo", Directory $ Map.fromList [
+        (PathName "foo.txt", Regular NonExecutable "foo text")
+      , (PathName "tobar"  , SymLink "../bar/bar.txt")
+      ])
+
+  , (PathName "bar", Directory $ Map.fromList [
+        (PathName "bar.txt", Regular NonExecutable "bar text")
+      , (PathName "tofoo"  , SymLink "../foo/foo.txt")
+      ])
   ]
 
 -- * For each sample above, feed it into `nix-store --dump`,

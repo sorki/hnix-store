@@ -8,52 +8,61 @@
 Description : Allowed effects for interacting with Nar files.
 Maintainer  : Shea Levy <shea@shealevy.com>
 |-}
-module System.Nix.Nar where
+module System.Nix.Nar (
+    FileSystemObject(..)
+  , IsExecutable (..)
+  , Nar(..)
+  , getNar
+  , localUnpackNar
+  , putNar
+  ) where
 
 import           Control.Applicative
 import           Control.Monad              (replicateM, replicateM_)
+import Control.Monad.Writer
 import qualified Data.Binary                as B
 import qualified Data.Binary.Get            as B
 import qualified Data.Binary.Put            as B
 import qualified Data.ByteString.Lazy.Char8 as BSL
+import           Data.Foldable              (forM_)
+import qualified Data.Map                   as Map
 import           Data.Maybe                 (fromMaybe)
 import           Data.Monoid                ((<>))
-import qualified Data.Set                   as Set
 import qualified Data.Text                  as T
 import qualified Data.Text.Encoding         as E
 import           GHC.Int                    (Int64)
+import           System.Directory
+import           System.FilePath
+import           System.Posix.Files         (createSymbolicLink)
 
 import           System.Nix.Path
 
 
 data NarEffects (m :: * -> *) = NarEffets {
-    readFile         :: FilePath -> m BSL.ByteString
-  , listDir          :: FilePath -> m [FileSystemObject]
-  , narFromFileBytes :: BSL.ByteString -> m Nar
-  , narFromDirectory :: FilePath -> m Nar
+    readFile :: FilePath -> m BSL.ByteString
+  , listDir  :: FilePath -> m [FileSystemObject]
 }
 
 
 -- Directly taken from Eelco thesis
 -- https://nixos.org/%7Eeelco/pubs/phd-thesis.pdf
 
--- TODO: Should we use rootedPath, validPath rather than FilePath?
 data Nar = Nar { narFile :: FileSystemObject }
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Show)
 
 data FileSystemObject =
     Regular IsExecutable BSL.ByteString
-  | Directory (Set.Set (PathName, FileSystemObject))
+  | Directory (Map.Map PathName FileSystemObject)
   | SymLink BSL.ByteString
   deriving (Eq, Show)
 
--- TODO - is this right? How does thesis define ordering of FSOs?
-instance Ord FileSystemObject where
-    compare (Regular _ c1) (Regular _ c2) = compare c1 c2
-    compare (Regular _ _)  _              = GT
-    compare (Directory s1) (Directory s2) = compare s1 s2
-    compare (Directory _)  _              = GT
-    compare (SymLink l1) (SymLink l2)     = compare l1 l2
+-- -- TODO - is this right? How does thesis define ordering of FSOs?
+-- instance Ord FileSystemObject where
+--     compare (Regular _ c1) (Regular _ c2) = compare c1 c2
+--     compare (Regular _ _)  _              = GT
+--     compare (Directory s1) (Directory s2) = compare s1 s2
+--     compare (Directory _)  _              = GT
+--     compare (SymLink l1) (SymLink l2)     = compare l1 l2
 
 data IsExecutable = NonExecutable | Executable
     deriving (Eq, Show)
@@ -62,32 +71,33 @@ data IsExecutable = NonExecutable | Executable
 ------------------------------------------------------------------------------
 -- | Serialize Nar to lazy ByteString
 putNar :: Nar -> B.Put
-putNar (Nar file) = header <>
-                    parens (putFile file)
+putNar (Nar file) = header <> parens (putFile file)
     where
 
         header   = str "nix-archive-1"
 
         putFile (Regular isExec contents) =
-               str "type" >> str "regular"
+               strs ["type", "regular"]
             >> (if isExec == Executable
-               then str "executable" <> str ""
+               then strs ["executable", ""]
                else return ())
-            >> str "contents" <> str contents
+            >> strs ["contents", contents]
 
         putFile (SymLink target) =
-               str "type" >> str "symlink" >> str "target" >> str target
+               strs ["type", "symlink", "target", target]
 
+        -- toList sorts the entries by PathName before serializing
         putFile (Directory entries) =
-               str "type" <> str "directory"
-            <> foldMap putEntry entries
+               strs ["type", "directory"]
+            <> mapM_ putEntry (Map.toList entries)
 
-        putEntry (PathName name, fso) =
-            str "entry" <>
-            parens (str "name" <>
-                    str (BSL.fromStrict $ E.encodeUtf8 name) <>
-                    str "node" <>
-                    parens (putFile fso))
+        putEntry (PathName name, fso) = do
+            str "entry"
+            parens $ do
+              str "name"
+              str (BSL.fromStrict $ E.encodeUtf8 name)
+              str "node"
+              parens (putFile fso)
 
         parens m = str "(" >> m >> str ")"
 
@@ -102,6 +112,9 @@ putNar (Nar file) = header <>
         pad bs = do
           B.putLazyByteString bs
           B.putLazyByteString (BSL.replicate (padLen (BSL.length bs)) '\NUL')
+
+        strs :: [BSL.ByteString] -> B.Put
+        strs = mapM_ str
 
 
 ------------------------------------------------------------------------------
@@ -129,7 +142,7 @@ getNar = fmap Nar $ header >> parens getFile
           assertStr "type"
           assertStr "directory"
           fs <- many getEntry
-          return $ Directory (Set.fromList fs)
+          return $ Directory (Map.fromList fs)
 
       getSymLink = do
           assertStr "type"
@@ -167,3 +180,37 @@ getNar = fmap Nar $ header >> parens getFile
 -- | Distance to the next multiple of 8
 padLen :: Int64 -> Int64
 padLen n = (8 - n) `mod` 8
+
+
+-- | Unpack a FileSystemObject into a non-nix-store directory (e.g. for testing)
+localUnpackNar :: FilePath -> Nar -> IO ()
+localUnpackNar basePath (Nar fso) = do
+
+  -- Create regular files and directories,
+  -- But save link creation until the end, by writing link commands out
+  -- to a queue, since otherwise we may try to create a link before
+  -- its target exists
+
+  -- TODO: Links may link to each other, so find a topological sort
+  -- of all the enqueued links. Otherwise we may still create them
+  -- in an invalid order. Ugh. :)
+  links <- execWriterT $ localUnpackFSO basePath fso
+  mapM_ (uncurry createSymbolicLink) links
+
+  where
+    localUnpackFSO :: FilePath
+                   -> FileSystemObject
+                   -> WriterT [(FilePath, FilePath)] IO ()
+    localUnpackFSO basePath fso = case fso of
+
+       Regular isExec bs -> liftIO $ do
+         BSL.writeFile basePath bs
+         p <- getPermissions basePath
+         setPermissions basePath (p {executable = isExec == Executable})
+
+       SymLink targ -> tell [(BSL.unpack targ,  basePath)]
+
+       Directory contents -> do
+         liftIO $ createDirectory basePath
+         forM_ (Map.toList contents) $ \(PathName path', fso) ->
+           localUnpackFSO (basePath </> T.unpack path') fso
