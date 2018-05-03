@@ -1,14 +1,23 @@
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Nar where
 
+import           Control.Exception           (try)
+import           Control.Monad               (replicateM)
+import           Control.Monad.IO.Class      (liftIO)
 import           Data.Binary.Get             (Get (..), runGet)
 import           Data.Binary.Put             (Put (..), runPut)
 import qualified Data.ByteString.Base64.Lazy as B64
 import qualified Data.ByteString.Lazy        as BSL
+import qualified Data.ByteString.Lazy.Char8  as BSC
 import qualified Data.Map                    as Map
 import           Data.Maybe                  (isJust)
+import qualified Data.Text                   as T
+import qualified System.Process              as P
 import           Test.Tasty.Hspec
+import           Test.Tasty.QuickCheck
+-- import qualified          Test.Tasty.HUnit
 
 import           System.Nix.Nar
 import           System.Nix.Path
@@ -25,6 +34,14 @@ spec_narEncoding = do
   -- the same bytestring as `nix-store --dump`
   let encEqualsNixStore n b = runPut (putNar n) `shouldBe` b
 
+  -- Generate the ground-truth encoding on the fly with
+  -- `nix-store --dump`, rather than generating fixtures
+  -- beforehand
+  let encEqualsNixStore' n = do
+        localUnpackNar "testfile" n
+        nixStoreNar <- P.readProcess "nix-store" ["--dump", "testfile"] ""
+        _ <- P.runCommand "rm -rf testfile"
+        runPut (putNar n) `shouldBe` BSC.pack nixStoreNar
 
   describe "parser-roundtrip" $ do
     it "roundtrips regular" $ do
@@ -58,6 +75,19 @@ spec_narEncoding = do
 
     it "matches directory" $ do
       encEqualsNixStore (Nar sampleDirectory) sampleDirectoryBaseline
+
+  -- liftIO (try (P.readProcess "nix-store" ["--version"] "")) >>= \case
+  --   -- Left  _ -> "nix-store not found on path, skipping tests"
+  --   Right _ -> describe "matches-nix-store-live" $ do
+
+  --     it "matches regular live" $ do
+  --       encEqualsNixStore' (Nar sampleRegular)
+
+-- hunit_test :: HU.Assertion
+-- hunit_test = return ()
+
+prop_narEncoding :: Nar -> Property
+prop_narEncoding n = runGet getNar (runPut $ putNar n) === n
 
 
 
@@ -163,3 +193,125 @@ sampleDirectoryBaseline = B64.decodeLenient
   \R5cGUAAAAABwAAAAAAAABzeW1saW5rAAYAAAAAAAAAdGFyZ2V0A\
   \AAHAAAAAAAAAGhlbGxvLmMAAQAAAAAAAAApAAAAAAAAAAEAAAAA\
   \AAAAKQAAAAAAAAABAAAAAAAAACkAAAAAAAAA"
+
+-- | A spec for buliding Arbitrary NARs. Since the space
+-- of all possible NAR values is much too large and full
+-- of invalid cases, we can use an Arbitrary `NarPlan`
+-- to narrow the space
+data NarPlan = NarPlan
+  { narNGoodLinks :: Positive Int
+  , narNBadLinks  :: Positive Int
+  }
+
+data LinkStep
+  = Up                   -- ( ".."    </> )
+  | Down (Positive Int)  -- ( "dirN"  </> )
+  | Peer (Positive Int)  -- ( "fileN" </> )
+
+data FSOZipContext
+  = Top  -- Pair with FSO
+    -- ^ Focus is on the whole FSO
+  | InEntry PathName  FSOZipper [(PathName, FileSystemObject)]  -- Pair with FSO
+    -- ^ Focus is into a directory
+  | InName FileSystemObject FSOZipper -- Pair with PathName
+
+type FSOZipper = (FSOZipContext, FileSystemObject)
+
+fromZip :: FSOZipper -> FileSystemObject
+fromZip (Top, fso) = fso
+fromZip (InEntry p subzip peers, fso) =
+  Directory $ Map.fromList $ (p, fromZip subzip) : peers
+
+zipTop :: FileSystemObject -> FSOZipper
+zipTop fso = (Top, fso)
+
+-- zipIn :: FSOZipper -> PathName -> Maybe FSOZipper
+-- zipIn (oldCtx, Directory elems) p = case Map.lookup p elems of
+--   Nothing -> Nothing
+--   Just e  -> Just $ (newCtx, e)
+--     where newCtx = case oldCtx of
+--             (Top, _) -> InEntry p Top peers
+
+-- data FSO = Reg + List (Name * FSO)
+-- z (Reg + List (Name * FSO)) = z Reg + z(Name * FSO)
+--                        = z Reg + FSO*(z Name) + Name*(z FSO)
+--
+-- z (List a) = z a * (Index * List a)
+
+-- d (f (g (x)) / d x) =
+
+ --  |
+
+{-
+
+Top:
+
+  | - foo
+  |   - bar.txt
+ -|   - baz.txt
+  | - bin
+  |   - bar
+  |   - baz
+  | - qux.txt
+
+
+InDir foo top (bin = [bar, baz]):
+
+  | - foo
+ -|   - bar.txt
+  |   - baz.txt
+    - bin
+      - bar
+      - baz
+    - qux.txt
+
+InDir foo (InEntry bar.txt Top (baz.txt = bytes)) (bin = [bar, baz]):
+
+    - foo
+ -|   - bar.txt
+      - baz.txt
+    - bin
+      - bar
+      - baz
+    - qux.txt
+
+
+-- (_ , FSO)   -- Top
+--
+
+
+foo: Regular "Hello"
+bar: Regular "hey"
+
+
+-}
+
+instance Arbitrary Nar where
+  arbitrary = Nar <$> resize 10 arbitrary
+
+instance Arbitrary FileSystemObject where
+  -- To build an arbitrary Nar,
+  arbitrary = do
+    n <- getSize
+    if n < 2
+      then arbFile
+      else arbDirectory n
+
+      where
+
+        arbFile :: Gen FileSystemObject
+        arbFile = Regular
+         <$> elements [NonExecutable, Executable]
+         <*> oneof  [fmap BSL.pack (arbitrary) , -- Binary File
+                     fmap BSC.pack (arbitrary) ] -- ASCII  File
+
+        arbName :: Gen PathName
+        arbName = fmap (PathName . T.pack) $ do
+          Positive n <- arbitrary
+          replicateM n (elements $ ['a'..'z'] ++ ['0'..'9'])
+
+        arbDirectory :: Int -> Gen FileSystemObject
+        arbDirectory n = fmap (Directory . Map.fromList) $ replicateM n $ do
+          nm <- arbName
+          f <- oneof [arbFile, arbDirectory (n `div` 2)]
+          return (nm,f)
