@@ -1,5 +1,3 @@
-{-# LANGUAGE PackageImports #-}
-
 {-|
 Description : Types and effects for interacting with the Nix store.
 Maintainer  : Shea Levy <shea@shealevy.com>

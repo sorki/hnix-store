@@ -52,7 +52,7 @@ data Nar = Nar { narFile :: FileSystemObject }
 
 data FileSystemObject =
     Regular IsExecutable BSL.ByteString
-  | Directory (Map.Map PathName FileSystemObject)
+  | Directory (Map.Map FilePathPart FileSystemObject)
   | SymLink BSL.ByteString
   deriving (Eq, Show)
 
@@ -86,12 +86,12 @@ putNar (Nar file) = header <> parens (putFile file)
         putFile (SymLink target) =
                strs ["type", "symlink", "target", target]
 
-        -- toList sorts the entries by PathName before serializing
+        -- toList sorts the entries by FilePathPart before serializing
         putFile (Directory entries) =
                strs ["type", "directory"]
             <> mapM_ putEntry (Map.toList entries)
 
-        putEntry (PathName name, fso) = do
+        putEntry (FilePathPart name, fso) = do
             str "entry"
             parens $ do
               str "name"
@@ -157,9 +157,9 @@ getNar = fmap Nar $ header >> parens getFile
               mname <- E.decodeUtf8 . BSL.toStrict <$> str
               assertStr "node"
               file <- parens getFile
-              maybe (fail $ "Bad PathName: " ++ show mname)
+              maybe (fail $ "Bad FilePathPart: " ++ show mname)
                     (return . (,file))
-                    (pathName mname)
+                    (filePathPart mname)
 
       -- Fetch a length-prefixed, null-padded string
       str = do
@@ -212,5 +212,5 @@ localUnpackNar basePath (Nar fso) = do
 
        Directory contents -> do
          liftIO $ createDirectory basePath
-         forM_ (Map.toList contents) $ \(PathName path', fso) ->
+         forM_ (Map.toList contents) $ \(FilePathPart path', fso) ->
            localUnpackFSO (basePath </> T.unpack path') fso
