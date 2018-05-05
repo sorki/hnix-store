@@ -1,9 +1,10 @@
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
-module Nar where
+module NarFormat where
 
-import           Control.Exception           (try)
+import           Control.Exception           (SomeException, try)
 import           Control.Monad               (replicateM)
 import           Control.Monad.IO.Class      (liftIO)
 import           Data.Binary.Get             (Get (..), runGet)
@@ -15,9 +16,10 @@ import qualified Data.Map                    as Map
 import           Data.Maybe                  (isJust)
 import qualified Data.Text                   as T
 import qualified System.Process              as P
+import           Test.Tasty                  as T
 import           Test.Tasty.Hspec
+import qualified Test.Tasty.HUnit            as HU
 import           Test.Tasty.QuickCheck
--- import qualified          Test.Tasty.HUnit
 
 import           System.Nix.Nar
 import           System.Nix.Path
@@ -34,14 +36,6 @@ spec_narEncoding = do
   -- the same bytestring as `nix-store --dump`
   let encEqualsNixStore n b = runPut (putNar n) `shouldBe` b
 
-  -- Generate the ground-truth encoding on the fly with
-  -- `nix-store --dump`, rather than generating fixtures
-  -- beforehand
-  let encEqualsNixStore' n = do
-        localUnpackNar "testfile" n
-        nixStoreNar <- P.readProcess "nix-store" ["--dump", "testfile"] ""
-        _ <- P.runCommand "rm -rf testfile"
-        runPut (putNar n) `shouldBe` BSC.pack nixStoreNar
 
   describe "parser-roundtrip" $ do
     it "roundtrips regular" $ do
@@ -60,7 +54,7 @@ spec_narEncoding = do
       roundTrip (Nar sampleDirectory)
 
 
-  describe "matches-nix-store" $ do
+  describe "matches-nix-store fixture" $ do
     it "matches regular" $ do
       encEqualsNixStore (Nar sampleRegular) sampleRegularBaseline
 
@@ -76,18 +70,34 @@ spec_narEncoding = do
     it "matches directory" $ do
       encEqualsNixStore (Nar sampleDirectory) sampleDirectoryBaseline
 
-  -- liftIO (try (P.readProcess "nix-store" ["--version"] "")) >>= \case
-  --   -- Left  _ -> "nix-store not found on path, skipping tests"
-  --   Right _ -> describe "matches-nix-store-live" $ do
+unit_nixStoreRegular :: HU.Assertion
+unit_nixStoreRegular = filesystemNixStore "regular" (Nar sampleRegular)
 
-  --     it "matches regular live" $ do
-  --       encEqualsNixStore' (Nar sampleRegular)
+unit_nixStoreDirectory :: HU.Assertion
+unit_nixStoreDirectory = filesystemNixStore "regular" (Nar sampleDirectory)
 
--- hunit_test :: HU.Assertion
--- hunit_test = return ()
+unit_nixStoreDirectory' :: HU.Assertion
+unit_nixStoreDirectory' = filesystemNixStore "regular" (Nar sampleDirectory')
 
-prop_narEncoding :: Nar -> Property
-prop_narEncoding n = runGet getNar (runPut $ putNar n) === n
+prop_narEncodingArbitrary :: Nar -> Property
+prop_narEncodingArbitrary n = runGet getNar (runPut $ putNar n) === n
+
+
+-- | Generate the ground-truth encoding on the fly with
+--   `nix-store --dump`, rather than generating fixtures
+--   beforehand
+filesystemNixStore :: String -> Nar -> IO ()
+filesystemNixStore s n = do
+
+  ver <- try (P.readProcess "nix-store" ["--version"] "")
+  case ver of
+    Left  (e :: SomeException) -> print "No nix-store on system"
+    Right _ -> do
+      localUnpackNar "testfile" n
+      nixStoreNar <- P.readProcess "nix-store" ["--dump", "testfile"] ""
+      _ <- P.runCommand "rm -rf testfile"
+      HU.assertEqual s (runPut (putNar n)) (BSC.pack nixStoreNar)
+
 
 
 
@@ -194,97 +204,17 @@ sampleDirectoryBaseline = B64.decodeLenient
   \AAHAAAAAAAAAGhlbGxvLmMAAQAAAAAAAAApAAAAAAAAAAEAAAAA\
   \AAAAKQAAAAAAAAABAAAAAAAAACkAAAAAAAAA"
 
--- | A spec for buliding Arbitrary NARs. Since the space
--- of all possible NAR values is much too large and full
--- of invalid cases, we can use an Arbitrary `NarPlan`
--- to narrow the space
-data NarPlan = NarPlan
-  { narNGoodLinks :: Positive Int
-  , narNBadLinks  :: Positive Int
-  }
 
-data LinkStep
-  = Up                   -- ( ".."    </> )
-  | Down (Positive Int)  -- ( "dirN"  </> )
-  | Peer (Positive Int)  -- ( "fileN" </> )
+-- | Add a link to a FileSystemObject. This is useful
+--   when creating Arbitrary FileSystemObjects. It
+--   isn't implemented yet
+mkLink ::
+     FilePath -- ^ Target
+  -> FilePath -- ^ Link
+  -> FileSystemObject -- ^ FileSystemObject to add link to
+  -> FileSystemObject
+mkLink = undefined -- TODO
 
-data FSOZipContext
-  = Top  -- Pair with FSO
-    -- ^ Focus is on the whole FSO
-  | InEntry PathName  FSOZipper [(PathName, FileSystemObject)]  -- Pair with FSO
-    -- ^ Focus is into a directory
-  | InName FileSystemObject FSOZipper -- Pair with PathName
-
-type FSOZipper = (FSOZipContext, FileSystemObject)
-
-fromZip :: FSOZipper -> FileSystemObject
-fromZip (Top, fso) = fso
-fromZip (InEntry p subzip peers, fso) =
-  Directory $ Map.fromList $ (p, fromZip subzip) : peers
-
-zipTop :: FileSystemObject -> FSOZipper
-zipTop fso = (Top, fso)
-
--- zipIn :: FSOZipper -> PathName -> Maybe FSOZipper
--- zipIn (oldCtx, Directory elems) p = case Map.lookup p elems of
---   Nothing -> Nothing
---   Just e  -> Just $ (newCtx, e)
---     where newCtx = case oldCtx of
---             (Top, _) -> InEntry p Top peers
-
--- data FSO = Reg + List (Name * FSO)
--- z (Reg + List (Name * FSO)) = z Reg + z(Name * FSO)
---                        = z Reg + FSO*(z Name) + Name*(z FSO)
---
--- z (List a) = z a * (Index * List a)
-
--- d (f (g (x)) / d x) =
-
- --  |
-
-{-
-
-Top:
-
-  | - foo
-  |   - bar.txt
- -|   - baz.txt
-  | - bin
-  |   - bar
-  |   - baz
-  | - qux.txt
-
-
-InDir foo top (bin = [bar, baz]):
-
-  | - foo
- -|   - bar.txt
-  |   - baz.txt
-    - bin
-      - bar
-      - baz
-    - qux.txt
-
-InDir foo (InEntry bar.txt Top (baz.txt = bytes)) (bin = [bar, baz]):
-
-    - foo
- -|   - bar.txt
-      - baz.txt
-    - bin
-      - bar
-      - baz
-    - qux.txt
-
-
--- (_ , FSO)   -- Top
---
-
-
-foo: Regular "Hello"
-bar: Regular "hey"
-
-
--}
 
 instance Arbitrary Nar where
   arbitrary = Nar <$> resize 10 arbitrary

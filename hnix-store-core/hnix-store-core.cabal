@@ -48,7 +48,7 @@ test-suite format-tests
    type: exitcode-stdio-1.0
    main-is: Driver.hs
    other-modules:
-       Nar
+       NarFormat
    hs-source-dirs:
        tests 
    build-depends:
