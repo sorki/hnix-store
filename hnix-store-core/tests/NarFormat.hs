@@ -125,23 +125,23 @@ sampleSymLink = SymLink "hello.c"
 -- | A directory that includes some of the above sample files
 sampleDirectory :: FileSystemObject
 sampleDirectory = Directory $ Map.fromList
-  [(PathName "hello.c", sampleRegular')
-  ,(PathName "build.sh", sampleExecutable)
-  ,(PathName "hi.c", sampleSymLink)
+  [(FilePathPart "hello.c", sampleRegular')
+  ,(FilePathPart "build.sh", sampleExecutable)
+  ,(FilePathPart "hi.c", sampleSymLink)
   ]
 
 -- | A deeper directory tree with crossing links
 sampleDirectory' :: FileSystemObject
 sampleDirectory' = Directory $ Map.fromList [
 
-    (PathName "foo", Directory $ Map.fromList [
-        (PathName "foo.txt", Regular NonExecutable "foo text")
-      , (PathName "tobar"  , SymLink "../bar/bar.txt")
+    (FilePathPart "foo", Directory $ Map.fromList [
+        (FilePathPart "foo.txt", Regular NonExecutable "foo text")
+      , (FilePathPart "tobar"  , SymLink "../bar/bar.txt")
       ])
 
-  , (PathName "bar", Directory $ Map.fromList [
-        (PathName "bar.txt", Regular NonExecutable "bar text")
-      , (PathName "tofoo"  , SymLink "../foo/foo.txt")
+  , (FilePathPart "bar", Directory $ Map.fromList [
+        (FilePathPart "bar.txt", Regular NonExecutable "bar text")
+      , (FilePathPart "tofoo"  , SymLink "../foo/foo.txt")
       ])
   ]
 
@@ -235,8 +235,8 @@ instance Arbitrary FileSystemObject where
          <*> oneof  [fmap BSL.pack (arbitrary) , -- Binary File
                      fmap BSC.pack (arbitrary) ] -- ASCII  File
 
-        arbName :: Gen PathName
-        arbName = fmap (PathName . T.pack) $ do
+        arbName :: Gen FilePathPart
+        arbName = fmap (FilePathPart . T.pack) $ do
           Positive n <- arbitrary
           replicateM n (elements $ ['a'..'z'] ++ ['0'..'9'])
 
