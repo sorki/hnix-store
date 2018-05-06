@@ -56,13 +56,6 @@ data FileSystemObject =
   | SymLink BSL.ByteString
   deriving (Eq, Show)
 
--- -- TODO - is this right? How does thesis define ordering of FSOs?
--- instance Ord FileSystemObject where
---     compare (Regular _ c1) (Regular _ c2) = compare c1 c2
---     compare (Regular _ _)  _              = GT
---     compare (Directory s1) (Directory s2) = compare s1 s2
---     compare (Directory _)  _              = GT
---     compare (SymLink l1) (SymLink l2)     = compare l1 l2
 
 data IsExecutable = NonExecutable | Executable
     deriving (Eq, Show)
