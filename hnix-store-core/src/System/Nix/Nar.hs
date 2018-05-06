@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE KindSignatures      #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -14,12 +15,14 @@ module System.Nix.Nar (
   , Nar(..)
   , getNar
   , localUnpackNar
+  , narEffectsIO
   , putNar
   ) where
 
 import           Control.Applicative
 import           Control.Monad              (replicateM, replicateM_)
-import Control.Monad.Writer
+import Control.Monad.Trans
+import           Control.Monad.Writer
 import qualified Data.Binary                as B
 import qualified Data.Binary.Get            as B
 import qualified Data.Binary.Put            as B
@@ -38,9 +41,14 @@ import           System.Posix.Files         (createSymbolicLink)
 import           System.Nix.Path
 
 
-data NarEffects (m :: * -> *) = NarEffets {
-    readFile :: FilePath -> m BSL.ByteString
-  , listDir  :: FilePath -> m [FileSystemObject]
+data NarEffects (m :: * -> *) = NarEffects {
+    narReadFile   :: FilePath -> m BSL.ByteString
+  , narWriteFile  :: FilePath -> BSL.ByteString -> m ()
+  , narListDir    :: FilePath -> m [FilePath]
+  , narCreateDir  :: FilePath -> m ()
+  , narCreateLink :: FilePath -> FilePath -> m ()
+  , narGetPerms   :: FilePath -> m Permissions
+  , narSetPerms   :: FilePath -> Permissions ->  m ()
 }
 
 
@@ -176,8 +184,8 @@ padLen n = (8 - n) `mod` 8
 
 
 -- | Unpack a FileSystemObject into a non-nix-store directory (e.g. for testing)
-localUnpackNar :: FilePath -> Nar -> IO ()
-localUnpackNar basePath (Nar fso) = do
+localUnpackNar :: Monad m => NarEffects m -> FilePath -> Nar -> m ()
+localUnpackNar effs basePath (Nar fso) = do
 
   -- Create regular files and directories,
   -- But save link creation until the end, by writing link commands out
@@ -188,22 +196,32 @@ localUnpackNar basePath (Nar fso) = do
   -- of all the enqueued links. Otherwise we may still create them
   -- in an invalid order. Ugh. :)
   links <- execWriterT $ localUnpackFSO basePath fso
-  mapM_ (uncurry createSymbolicLink) links
+  mapM_ @[] (uncurry (narCreateLink effs)) links
 
   where
-    localUnpackFSO :: FilePath
-                   -> FileSystemObject
-                   -> WriterT [(FilePath, FilePath)] IO ()
+
     localUnpackFSO basePath fso = case fso of
 
-       Regular isExec bs -> liftIO $ do
-         BSL.writeFile basePath bs
-         p <- getPermissions basePath
-         setPermissions basePath (p {executable = isExec == Executable})
+       Regular isExec bs -> lift $ do
+         (narWriteFile effs) basePath bs
+         p <- narGetPerms effs basePath
+         (narSetPerms effs) basePath (p {executable = isExec == Executable})
 
        SymLink targ -> tell [(BSL.unpack targ,  basePath)]
 
        Directory contents -> do
-         liftIO $ createDirectory basePath
+         lift $ narCreateDir effs basePath
          forM_ (Map.toList contents) $ \(FilePathPart path', fso) ->
            localUnpackFSO (basePath </> T.unpack path') fso
+
+
+narEffectsIO :: NarEffects IO
+narEffectsIO = NarEffects {
+    narReadFile   = BSL.readFile
+  , narWriteFile  = BSL.writeFile
+  , narListDir    = listDirectory
+  , narCreateDir  = createDirectory
+  , narCreateLink = createSymbolicLink
+  , narGetPerms   = getPermissions
+  , narSetPerms   = setPermissions
+  }

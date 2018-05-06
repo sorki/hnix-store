@@ -93,7 +93,7 @@ filesystemNixStore s n = do
   case ver of
     Left  (e :: SomeException) -> print "No nix-store on system"
     Right _ -> do
-      localUnpackNar "testfile" n
+      localUnpackNar narEffectsIO "testfile" n
       nixStoreNar <- P.readProcess "nix-store" ["--dump", "testfile"] ""
       _ <- P.runCommand "rm -rf testfile"
       HU.assertEqual s (runPut (putNar n)) (BSC.pack nixStoreNar)
