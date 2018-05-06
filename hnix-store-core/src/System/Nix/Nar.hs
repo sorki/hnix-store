@@ -69,6 +69,10 @@ data IsExecutable = NonExecutable | Executable
     deriving (Eq, Show)
 
 
+instance B.Binary Nar where
+  get = getNar
+  put = putNar
+
 ------------------------------------------------------------------------------
 -- | Serialize Nar to lazy ByteString
 putNar :: Nar -> B.Put

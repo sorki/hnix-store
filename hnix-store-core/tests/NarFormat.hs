@@ -74,10 +74,16 @@ unit_nixStoreRegular :: HU.Assertion
 unit_nixStoreRegular = filesystemNixStore "regular" (Nar sampleRegular)
 
 unit_nixStoreDirectory :: HU.Assertion
-unit_nixStoreDirectory = filesystemNixStore "regular" (Nar sampleDirectory)
+unit_nixStoreDirectory = filesystemNixStore "directory" (Nar sampleDirectory)
 
 unit_nixStoreDirectory' :: HU.Assertion
-unit_nixStoreDirectory' = filesystemNixStore "regular" (Nar sampleDirectory')
+unit_nixStoreDirectory' = filesystemNixStore "directory'" (Nar sampleDirectory')
+
+unit_nixStoreBigFile :: HU.Assertion
+unit_nixStoreBigFile = filesystemNixStore "bigfile'" (Nar sampleLargeFile)
+
+unit_nixStoreBigDir :: HU.Assertion
+unit_nixStoreBigDir = filesystemNixStore "bigfile'" (Nar sampleLargeDir)
 
 prop_narEncodingArbitrary :: Nar -> Property
 prop_narEncodingArbitrary n = runGet getNar (runPut $ putNar n) === n
@@ -143,6 +149,36 @@ sampleDirectory' = Directory $ Map.fromList [
         (FilePathPart "bar.txt", Regular NonExecutable "bar text")
       , (FilePathPart "tofoo"  , SymLink "../foo/foo.txt")
       ])
+  ]
+
+-- NOTE: The `nixStoreBigFile` test fails at 9000000 bytes
+sampleLargeFile :: FileSystemObject
+sampleLargeFile =
+  Regular NonExecutable (BSL.take 9000000 (BSL.cycle "Lorem ipsum "))
+
+
+-- NOTE: The `nixStoreBigDir` test fails at 9000000 bytes with the error:
+--  nixStoreBigDir:            error: writing to file: Broken pipe
+--  FAIL
+--  Exception: fd:5: hGetContents: invalid argument (invalid byte sequence)
+sampleLargeFile' :: FileSystemObject
+sampleLargeFile' =
+  Regular NonExecutable (BSL.take 9000000 (BSL.cycle "Lorems ipsums "))
+
+sampleLargeDir :: FileSystemObject
+sampleLargeDir = Directory $ Map.fromList $ [
+    (FilePathPart "bf1", sampleLargeFile)
+  , (FilePathPart "bf2", sampleLargeFile')
+  ]
+  ++ [ (FilePathPart (T.pack $ 'f' : show n),
+        Regular NonExecutable (BSL.take 10000 (BSL.cycle "hi ")))
+     | n <- [1..100]]
+  ++ [
+  (FilePathPart "d", Directory $ Map.fromList
+      [ (FilePathPart (T.pack $ "df" ++ show n)
+        , Regular NonExecutable (BSL.take 10000 (BSL.cycle "subhi ")))
+      | n <- [1..100]]
+     )
   ]
 
 -- * For each sample above, feed it into `nix-store --dump`,
