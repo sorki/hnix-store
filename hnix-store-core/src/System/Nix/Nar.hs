@@ -21,8 +21,6 @@ module System.Nix.Nar (
 
 import           Control.Applicative
 import           Control.Monad              (replicateM, replicateM_)
-import Control.Monad.Trans
-import           Control.Monad.Writer
 import qualified Data.Binary                as B
 import qualified Data.Binary.Get            as B
 import qualified Data.Binary.Put            as B
@@ -189,32 +187,21 @@ padLen n = (8 - n) `mod` 8
 
 -- | Unpack a FileSystemObject into a non-nix-store directory (e.g. for testing)
 localUnpackNar :: Monad m => NarEffects m -> FilePath -> Nar -> m ()
-localUnpackNar effs basePath (Nar fso) = do
-
-  -- Create regular files and directories,
-  -- But save link creation until the end, by writing link commands out
-  -- to a queue, since otherwise we may try to create a link before
-  -- its target exists
-
-  -- TODO: Links may link to each other, so find a topological sort
-  -- of all the enqueued links. Otherwise we may still create them
-  -- in an invalid order. Ugh. :)
-  links <- execWriterT $ localUnpackFSO basePath fso
-  mapM_ @[] (uncurry (narCreateLink effs)) links
+localUnpackNar effs basePath (Nar fso) = localUnpackFSO basePath fso
 
   where
 
     localUnpackFSO basePath fso = case fso of
 
-       Regular isExec bs -> lift $ do
+       Regular isExec bs -> do
          (narWriteFile effs) basePath bs
          p <- narGetPerms effs basePath
          (narSetPerms effs) basePath (p {executable = isExec == Executable})
 
-       SymLink targ -> tell [(BSL.unpack targ,  basePath)]
+       SymLink targ -> narCreateLink effs (BSL.unpack targ) basePath
 
        Directory contents -> do
-         lift $ narCreateDir effs basePath
+         narCreateDir effs basePath
          forM_ (Map.toList contents) $ \(FilePathPart path', fso) ->
            localUnpackFSO (basePath </> T.unpack path') fso
 

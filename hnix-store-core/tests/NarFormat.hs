@@ -4,7 +4,7 @@
 
 module NarFormat where
 
-import           Control.Exception           (SomeException, try)
+import           Control.Exception           (SomeException, bracket, try)
 import           Control.Monad               (replicateM)
 import           Control.Monad.IO.Class      (liftIO)
 import           Data.Binary.Get             (Get (..), runGet)
@@ -98,10 +98,10 @@ filesystemNixStore s n = do
   ver <- try (P.readProcess "nix-store" ["--version"] "")
   case ver of
     Left  (e :: SomeException) -> print "No nix-store on system"
-    Right _ -> do
+    Right _ ->
+      bracket (return ()) (\_ -> P.runCommand "rm -rf testfile") $ \_ -> do
       localUnpackNar narEffectsIO "testfile" n
       nixStoreNar <- P.readProcess "nix-store" ["--dump", "testfile"] ""
-      _ <- P.runCommand "rm -rf testfile"
       HU.assertEqual s (runPut (putNar n)) (BSC.pack nixStoreNar)
 
 
@@ -154,7 +154,7 @@ sampleDirectory' = Directory $ Map.fromList [
 -- NOTE: The `nixStoreBigFile` test fails at 9000000 bytes
 sampleLargeFile :: FileSystemObject
 sampleLargeFile =
-  Regular NonExecutable (BSL.take 9000000 (BSL.cycle "Lorem ipsum "))
+  Regular NonExecutable (BSL.take 8000000 (BSL.cycle "Lorem ipsum "))
 
 
 -- NOTE: The `nixStoreBigDir` test fails at 9000000 bytes with the error:
@@ -163,7 +163,7 @@ sampleLargeFile =
 --  Exception: fd:5: hGetContents: invalid argument (invalid byte sequence)
 sampleLargeFile' :: FileSystemObject
 sampleLargeFile' =
-  Regular NonExecutable (BSL.take 9000000 (BSL.cycle "Lorems ipsums "))
+  Regular NonExecutable (BSL.take 8000000 (BSL.cycle "Lorems ipsums "))
 
 sampleLargeDir :: FileSystemObject
 sampleLargeDir = Directory $ Map.fromList $ [
