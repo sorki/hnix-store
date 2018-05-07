@@ -100,6 +100,7 @@ unit_packSelfSrcDir = do
       nixStoreNar <- getNixStoreDump "src"
       HU.assertEqual "src dir serializes the same between hnix-store and nix-store" hnixNar nixStoreNar
 
+
 -- | Generate the ground-truth encoding on the fly with
 --   `nix-store --dump`, rather than generating fixtures
 --   beforehand
@@ -112,16 +113,16 @@ filesystemNixStore s n = do
     Right _ ->
       bracket (return ()) (\_ -> P.runCommand "rm -rf testfile") $ \_ -> do
       localUnpackNar narEffectsIO "testfile" n
-      -- nixStoreNar <- getNixStoreDump "testfile"
-      nixStoreNar <- P.readProcess "nix-store" ["--dump", "testfile"] ""
+      nixStoreNar <- getNixStoreDump "testfile"
       HU.assertEqual s (runPut (putNar n))
-        -- nixStoreNar
-        (BSC.pack nixStoreNar)
+        nixStoreNar
 
+
+-- | Read the binary output of `nix-store --dump` for a filepath
 getNixStoreDump :: String -> IO BSL.ByteString
 getNixStoreDump fp = do
   (_,Just h, _, _) <- P.createProcess
-                      (P.proc "nix-store" ["--dump", "src"])
+                      (P.proc "nix-store" ["--dump", fp])
                       {P.std_out = P.CreatePipe}
   BSL.hGetContents h
 
@@ -170,19 +171,14 @@ sampleDirectory' = Directory $ Map.fromList [
       ])
   ]
 
--- NOTE: The `nixStoreBigFile` test fails at 9000000 bytes
 sampleLargeFile :: FileSystemObject
 sampleLargeFile =
-  Regular NonExecutable (BSL.take 1000000 (BSL.cycle "Lorem ipsum "))
+  Regular NonExecutable (BSL.take 9000000 (BSL.cycle "Lorem ipsum "))
 
 
--- NOTE: The `nixStoreBigDir` test fails at 9000000 bytes with the error:
---  nixStoreBigDir:            error: writing to file: Broken pipe
---  FAIL
---  Exception: fd:5: hGetContents: invalid argument (invalid byte sequence)
 sampleLargeFile' :: FileSystemObject
 sampleLargeFile' =
-  Regular NonExecutable (BSL.take 1000000 (BSL.cycle "Lorems ipsums "))
+  Regular NonExecutable (BSL.take 9000000 (BSL.cycle "Lorems ipsums "))
 
 sampleLargeDir :: FileSystemObject
 sampleLargeDir = Directory $ Map.fromList $ [
@@ -287,9 +283,8 @@ instance Arbitrary FileSystemObject where
         arbFile :: Gen FileSystemObject
         arbFile = Regular
          <$> elements [NonExecutable, Executable]
-         <*> fmap BSL.pack arbitrary
-         -- <*> oneof  [fmap BSL.pack (arbitrary) , -- Binary File
-         --             fmap BSC.pack (arbitrary) ] -- ASCII  File
+         <*> oneof  [fmap BSL.pack arbitrary , -- Binary File
+                     fmap BSC.pack arbitrary ] -- ASCII  File
 
         arbName :: Gen FilePathPart
         arbName = fmap (FilePathPart . T.pack) $ do

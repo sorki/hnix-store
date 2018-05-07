@@ -221,10 +221,12 @@ localPackNar effs basePath = Nar <$> localPackFSO basePath
       fType <- (,) <$> narIsDir effs path' <*> narIsSymLink effs path'
       case fType of
         (_,  True) -> return $ SymLink (T.pack path')
-        (False, _) -> Regular <$> isExecutable effs path' <*> narReadFile effs path'
+        (False, _) -> Regular <$> isExecutable effs path'
+                              <*> narReadFile effs path'
         (True , _) -> fmap (Directory . Map.fromList) $ do
           fs <- narListDir effs path'
-          forM fs $ \fp -> (FilePathPart (T.pack fp),) <$> localPackFSO (path' </> fp)
+          forM fs $ \fp ->
+            (FilePathPart (T.pack fp),) <$> localPackFSO (path' </> fp)
 
 
 
@@ -240,6 +242,7 @@ narEffectsIO = NarEffects {
   , narIsDir      = fmap isDirectory <$> getFileStatus
   , narIsSymLink  = pathIsSymbolicLink
   }
+
 
 isExecutable :: Functor m => NarEffects m -> FilePath -> m IsExecutable
 isExecutable effs fp =
