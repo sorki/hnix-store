@@ -4,9 +4,11 @@
 
 module NarFormat where
 
+import           Control.Concurrent (threadDelay)
 import           Control.Exception           (SomeException, bracket, try)
 import           Control.Monad               (replicateM)
 import           Control.Monad.IO.Class      (liftIO)
+import           Data.Binary                 (put)
 import           Data.Binary.Get             (Get (..), runGet)
 import           Data.Binary.Put             (Put (..), runPut)
 import qualified Data.ByteString.Base64.Lazy as B64
@@ -88,6 +90,15 @@ unit_nixStoreBigDir = filesystemNixStore "bigfile'" (Nar sampleLargeDir)
 prop_narEncodingArbitrary :: Nar -> Property
 prop_narEncodingArbitrary n = runGet getNar (runPut $ putNar n) === n
 
+unit_packSelfSrcDir :: HU.Assertion
+unit_packSelfSrcDir = do
+  ver <- try (P.readProcess "nix-store" ["--version"] "")
+  case ver of
+    Left  (e :: SomeException) -> print "No nix-store on system"
+    Right _ -> do
+      hnixNar <- runPut . put <$> localPackNar narEffectsIO "src"
+      nixStoreNar <- getNixStoreDump "src"
+      HU.assertEqual "src dir serializes the same between hnix-store and nix-store" hnixNar nixStoreNar
 
 -- | Generate the ground-truth encoding on the fly with
 --   `nix-store --dump`, rather than generating fixtures
@@ -101,10 +112,18 @@ filesystemNixStore s n = do
     Right _ ->
       bracket (return ()) (\_ -> P.runCommand "rm -rf testfile") $ \_ -> do
       localUnpackNar narEffectsIO "testfile" n
+      -- nixStoreNar <- getNixStoreDump "testfile"
       nixStoreNar <- P.readProcess "nix-store" ["--dump", "testfile"] ""
-      HU.assertEqual s (runPut (putNar n)) (BSC.pack nixStoreNar)
+      HU.assertEqual s (runPut (putNar n))
+        -- nixStoreNar
+        (BSC.pack nixStoreNar)
 
-
+getNixStoreDump :: String -> IO BSL.ByteString
+getNixStoreDump fp = do
+  (_,Just h, _, _) <- P.createProcess
+                      (P.proc "nix-store" ["--dump", "src"])
+                      {P.std_out = P.CreatePipe}
+  BSL.hGetContents h
 
 
 -- * Several sample FSOs defined in Haskell, for use in encoding/decoding
@@ -154,7 +173,7 @@ sampleDirectory' = Directory $ Map.fromList [
 -- NOTE: The `nixStoreBigFile` test fails at 9000000 bytes
 sampleLargeFile :: FileSystemObject
 sampleLargeFile =
-  Regular NonExecutable (BSL.take 8000000 (BSL.cycle "Lorem ipsum "))
+  Regular NonExecutable (BSL.take 1000000 (BSL.cycle "Lorem ipsum "))
 
 
 -- NOTE: The `nixStoreBigDir` test fails at 9000000 bytes with the error:
@@ -163,7 +182,7 @@ sampleLargeFile =
 --  Exception: fd:5: hGetContents: invalid argument (invalid byte sequence)
 sampleLargeFile' :: FileSystemObject
 sampleLargeFile' =
-  Regular NonExecutable (BSL.take 8000000 (BSL.cycle "Lorems ipsums "))
+  Regular NonExecutable (BSL.take 1000000 (BSL.cycle "Lorems ipsums "))
 
 sampleLargeDir :: FileSystemObject
 sampleLargeDir = Directory $ Map.fromList $ [
@@ -268,8 +287,9 @@ instance Arbitrary FileSystemObject where
         arbFile :: Gen FileSystemObject
         arbFile = Regular
          <$> elements [NonExecutable, Executable]
-         <*> oneof  [fmap BSL.pack (arbitrary) , -- Binary File
-                     fmap BSC.pack (arbitrary) ] -- ASCII  File
+         <*> fmap BSL.pack arbitrary
+         -- <*> oneof  [fmap BSL.pack (arbitrary) , -- Binary File
+         --             fmap BSC.pack (arbitrary) ] -- ASCII  File
 
         arbName :: Gen FilePathPart
         arbName = fmap (FilePathPart . T.pack) $ do
