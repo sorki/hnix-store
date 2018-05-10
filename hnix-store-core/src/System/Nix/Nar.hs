@@ -38,7 +38,7 @@ import           GHC.Int                    (Int64)
 import           System.Directory
 import           System.FilePath
 import           System.Posix.Files         (createSymbolicLink, fileSize, getFileStatus,
-                                             isDirectory)
+                                             isDirectory, readSymbolicLink)
 
 import           System.Nix.Path
 
@@ -53,6 +53,7 @@ data NarEffects (m :: * -> *) = NarEffects {
   , narIsDir      :: FilePath -> m Bool
   , narIsSymLink  :: FilePath -> m Bool
   , narFileSize   :: FilePath -> m Int64
+  , narReadLink   :: FilePath -> m FilePath
 }
 
 
@@ -117,6 +118,7 @@ putNar (Nar file) = header <> parens (putFile file)
 
         putContents :: Int64 -> BSL.ByteString -> B.Put
         putContents fSize bs = str "contents" <> int fSize <> (pad fSize bs)
+        -- putContents fSize bs = str "contents" <> int (BSL.length bs) <> (pad fSize bs)
 
         int :: Integral a => a -> B.Put
         int n = B.putInt64le $ fromIntegral n
@@ -227,7 +229,7 @@ localPackNar effs basePath = Nar <$> localPackFSO basePath
     localPackFSO path' = do
       fType <- (,) <$> narIsDir effs path' <*> narIsSymLink effs path'
       case fType of
-        (_,  True) -> return $ SymLink (T.pack path')
+        (_,  True) -> SymLink . T.pack <$> narReadLink effs path'
         (False, _) -> Regular <$> isExecutable effs path'
                               <*> narFileSize effs path'
                               <*> narReadFile effs path'
@@ -250,6 +252,7 @@ narEffectsIO = NarEffects {
   , narIsDir      = fmap isDirectory <$> getFileStatus
   , narIsSymLink  = pathIsSymbolicLink
   , narFileSize   = fmap (fromIntegral . fileSize) <$> getFileStatus
+  , narReadLink   = readSymbolicLink
   }
 
 

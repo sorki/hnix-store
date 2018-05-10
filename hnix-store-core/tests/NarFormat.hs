@@ -4,7 +4,8 @@
 
 module NarFormat where
 
-import           Control.Concurrent (threadDelay)
+import           Control.Applicative         ((<|>))
+import           Control.Concurrent          (threadDelay)
 import           Control.Exception           (SomeException, bracket, try)
 import           Control.Monad               (replicateM)
 import           Control.Monad.IO.Class      (liftIO)
@@ -14,15 +15,18 @@ import           Data.Binary.Put             (Put (..), runPut)
 import qualified Data.ByteString.Base64.Lazy as B64
 import qualified Data.ByteString.Lazy        as BSL
 import qualified Data.ByteString.Lazy.Char8  as BSC
+import           Data.Int
 import qualified Data.Map                    as Map
-import           Data.Maybe                  (isJust)
+import           Data.Maybe                  (fromMaybe, isJust)
 import qualified Data.Text                   as T
 import           System.Directory            (removeFile)
+import           System.Environment          (getEnv)
 import qualified System.Process              as P
 import           Test.Tasty                  as T
 import           Test.Tasty.Hspec
 import qualified Test.Tasty.HUnit            as HU
 import           Test.Tasty.QuickCheck
+import           Text.Read                   (readMaybe)
 
 import           System.Nix.Nar
 import           System.Nix.Path
@@ -83,13 +87,15 @@ unit_nixStoreDirectory' :: HU.Assertion
 unit_nixStoreDirectory' = filesystemNixStore "directory'" (Nar sampleDirectory')
 
 unit_nixStoreBigFile :: HU.Assertion
-unit_nixStoreBigFile = filesystemNixStore "bigfile'" (Nar sampleLargeFile)
+unit_nixStoreBigFile = getBigFileSize >>= \sz ->
+  filesystemNixStore "bigfile'" (Nar $ sampleLargeFile sz)
 
 unit_nixStoreBigDir :: HU.Assertion
-unit_nixStoreBigDir = filesystemNixStore "bigfile'" (Nar sampleLargeDir)
+unit_nixStoreBigDir = getBigFileSize >>= \sz ->
+  filesystemNixStore "bigfile'" (Nar $ sampleLargeDir sz)
 
--- prop_narEncodingArbitrary :: Nar -> Property
--- prop_narEncodingArbitrary n = runGet getNar (runPut $ putNar n) === n
+prop_narEncodingArbitrary :: Nar -> Property
+prop_narEncodingArbitrary n = runGet getNar (runPut $ putNar n) === n
 
 unit_packSelfSrcDir :: HU.Assertion
 unit_packSelfSrcDir = do
@@ -99,19 +105,24 @@ unit_packSelfSrcDir = do
     Right _ -> do
       hnixNar <- runPut . put <$> localPackNar narEffectsIO "src"
       nixStoreNar <- getNixStoreDump "src"
-      HU.assertEqual "src dir serializes the same between hnix-store and nix-store" hnixNar nixStoreNar
-
+      HU.assertEqual
+        "src dir serializes the same between hnix-store and nix-store"
+        hnixNar
+        nixStoreNar
 
 unit_streamLargeFileToNar :: HU.Assertion
-unit_streamLargeFileToNar = bracket makeBigFile (const rmFiles') $ \_ -> do
-  localPackNar narEffectsIO bigFileName >>=
-    BSL.writeFile narFileName . runPut . put
-  where
-    bigFileName = "bigFile.bin"
-    narFileName = "bigFile.nar"
-    makeBigFile = BSL.writeFile bigFileName (BSL.take 10000000000 $ BSL.cycle "Lorem ipsum")
-    rmFiles     = removeFile bigFileName >> removeFile narFileName
-    rmFiles'    = return ()
+unit_streamLargeFileToNar =
+  bracket (getBigFileSize >>= makeBigFile) (const rmFiles) $ \_ -> do
+    nar <- localPackNar narEffectsIO bigFileName
+    BSL.writeFile narFileName . runPut . put $ nar
+    where
+      bigFileName = "bigFile.bin"
+      narFileName = "bigFile.nar"
+      makeBigFile = \sz -> BSL.writeFile bigFileName
+                           (BSL.take sz $ BSL.cycle "Lorem ipsum")
+      rmFiles     = removeFile bigFileName >> removeFile narFileName
+      -- rmFiles'    = return ()
+
 
 -- ****************  Utilities  ************************
 
@@ -123,13 +134,23 @@ filesystemNixStore testErrorName n = do
 
   ver <- try (P.readProcess "nix-store" ["--version"] "")
   case ver of
+    -- Left is not an error - testing machine simply doesn't have
+    -- `nix-store` executable, so pass
     Left  (e :: SomeException) -> print "No nix-store on system"
     Right _ ->
-      bracket (return ()) (\_ -> P.runCommand "rm -rf testfile") $ \_ -> do
+      bracket (return ()) (\_ -> P.runCommand "rm -rf testfile nixstorenar.nar hnix.nar") $ \_ -> do
+
+      -- stream nar contents to unpacked file(s)
       localUnpackNar narEffectsIO "testfile" n
-      nixStoreNar <- getNixStoreDump "testfile"
-      HU.assertEqual testErrorName (runPut (putNar n))
-        nixStoreNar
+
+      -- nix-store converts those files to nar
+      getNixStoreDump "testfile" >>= BSL.writeFile "nixstorenar.nar"
+
+      -- hnix converts those files to nar
+      localPackNar narEffectsIO "testfile" >>= BSL.writeFile "hnix.nar" . runPut . putNar
+
+      diffResult <- P.readProcess "diff" ["nixstorenar.nar", "hnix.nar"] ""
+      HU.assertEqual testErrorName diffResult ""
 
 
 -- | Read the binary output of `nix-store --dump` for a filepath
@@ -186,19 +207,19 @@ sampleDirectory' = Directory $ Map.fromList [
       ])
   ]
 
-sampleLargeFile :: FileSystemObject
-sampleLargeFile =
-  Regular NonExecutable 9000000 (BSL.take 9000000 (BSL.cycle "Lorem ipsum "))
+sampleLargeFile :: Int64 -> FileSystemObject
+sampleLargeFile fSize =
+  Regular NonExecutable fSize (BSL.take fSize (BSL.cycle "Lorem ipsum "))
 
 
-sampleLargeFile' :: FileSystemObject
-sampleLargeFile' =
-  Regular NonExecutable 9000000 (BSL.take 9000000 (BSL.cycle "Lorems ipsums "))
+sampleLargeFile' :: Int64 -> FileSystemObject
+sampleLargeFile' fSize =
+  Regular NonExecutable fSize (BSL.take fSize (BSL.cycle "Lorems ipsums "))
 
-sampleLargeDir :: FileSystemObject
-sampleLargeDir = Directory $ Map.fromList $ [
-    (FilePathPart "bf1", sampleLargeFile)
-  , (FilePathPart "bf2", sampleLargeFile')
+sampleLargeDir :: Int64 -> FileSystemObject
+sampleLargeDir fSize = Directory $ Map.fromList $ [
+    (FilePathPart "bf1", sampleLargeFile  fSize)
+  , (FilePathPart "bf2", sampleLargeFile' fSize)
   ]
   ++ [ (FilePathPart (T.pack $ 'f' : show n),
         Regular NonExecutable 10000 (BSL.take 10000 (BSL.cycle "hi ")))
@@ -271,6 +292,11 @@ sampleDirectoryBaseline = B64.decodeLenient
   \AAAAKQAAAAAAAAABAAAAAAAAACkAAAAAAAAA"
 
 
+-- | Control testcase sizes (bytes) by env variable
+getBigFileSize :: IO Int64
+getBigFileSize = fromMaybe 1000000 . readMaybe <$> (getEnv "HNIX_BIG_FILE_SIZE" <|> pure "")
+
+
 -- | Add a link to a FileSystemObject. This is useful
 --   when creating Arbitrary FileSystemObjects. It
 --   isn't implemented yet
@@ -301,8 +327,10 @@ instance Arbitrary FileSystemObject where
           Regular
             <$> elements [NonExecutable, Executable]
             <*> pure (fromIntegral fSize)
-            <*> oneof  [fmap BSL.pack (resize fSize arbitrary) , -- Binary File
-                        fmap BSC.pack (resize fSize arbitrary) ] -- ASCII  File
+            <*> oneof  [
+                  fmap (BSL.take fSize . BSL.cycle . BSL.pack . getNonEmpty) arbitrary , -- Binary File
+                  fmap (BSL.take fSize . BSL.cycle . BSC.pack . getNonEmpty) arbitrary   -- ASCII  File
+                  ]
 
         arbName :: Gen FilePathPart
         arbName = fmap (FilePathPart . T.pack) $ do
