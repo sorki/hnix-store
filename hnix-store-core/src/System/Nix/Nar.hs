@@ -37,7 +37,7 @@ import           Data.Traversable           (forM)
 import           GHC.Int                    (Int64)
 import           System.Directory
 import           System.FilePath
-import           System.Posix.Files         (createSymbolicLink, getFileStatus,
+import           System.Posix.Files         (createSymbolicLink, fileSize, getFileStatus,
                                              isDirectory)
 
 import           System.Nix.Path
@@ -52,6 +52,7 @@ data NarEffects (m :: * -> *) = NarEffects {
   , narSetPerms   :: FilePath -> Permissions ->  m ()
   , narIsDir      :: FilePath -> m Bool
   , narIsSymLink  :: FilePath -> m Bool
+  , narFileSize   :: FilePath -> m Int64
 }
 
 
@@ -62,7 +63,7 @@ data Nar = Nar { narFile :: FileSystemObject }
     deriving (Eq, Show)
 
 data FileSystemObject =
-    Regular IsExecutable BSL.ByteString
+    Regular IsExecutable Int64 BSL.ByteString
   | Directory (Map.Map FilePathPart FileSystemObject)
   | SymLink T.Text
   deriving (Eq, Show)
@@ -84,12 +85,12 @@ putNar (Nar file) = header <> parens (putFile file)
 
         header   = str "nix-archive-1"
 
-        putFile (Regular isExec contents) =
+        putFile (Regular isExec fSize contents) =
                strs ["type", "regular"]
             >> (if isExec == Executable
                then strs ["executable", ""]
                else return ())
-            >> strs ["contents", contents]
+            >> putContents fSize contents
 
         putFile (SymLink target) =
                strs ["type", "symlink", "target", BSL.fromStrict $ E.encodeUtf8 target]
@@ -109,17 +110,21 @@ putNar (Nar file) = header <> parens (putFile file)
 
         parens m = str "(" >> m >> str ")"
 
+        -- Do not use this for file contents
         str :: BSL.ByteString -> B.Put
         str t = let len = BSL.length t
-            in int len <> pad t
+            in int len <> pad len t
+
+        putContents :: Int64 -> BSL.ByteString -> B.Put
+        putContents fSize bs = str "contents" <> int fSize <> (pad fSize bs)
 
         int :: Integral a => a -> B.Put
         int n = B.putInt64le $ fromIntegral n
 
-        pad :: BSL.ByteString -> B.Put
-        pad bs = do
+        pad :: Int64 -> BSL.ByteString -> B.Put
+        pad strSize bs = do
           B.putLazyByteString bs
-          B.putLazyByteString (BSL.replicate (padLen (BSL.length bs)) 0)
+          B.putLazyByteString (BSL.replicate (padLen strSize) 0)
 
         strs :: [BSL.ByteString] -> B.Put
         strs = mapM_ str
@@ -143,8 +148,8 @@ getNar = fmap Nar $ header >> parens getFile
           mExecutable <- optional $ Executable <$ (assertStr "executable"
                                                    >> assertStr "")
           assertStr "contents"
-          contents <- str
-          return $ Regular (fromMaybe NonExecutable mExecutable) contents
+          (fSize, contents) <- sizedStr
+          return $ Regular (fromMaybe NonExecutable mExecutable) fSize contents
 
       getDirectory = do
           assertStr "type"
@@ -170,11 +175,13 @@ getNar = fmap Nar $ header >> parens getFile
                     (filePathPart mname)
 
       -- Fetch a length-prefixed, null-padded string
-      str = do
+      str = fmap snd sizedStr
+
+      sizedStr = do
           n <- B.getInt64le
           s <- B.getLazyByteString n
           p <- B.getByteString . fromIntegral $ padLen n
-          return s
+          return (n,s)
 
       parens m = assertStr "(" *> m <* assertStr ")"
 
@@ -198,7 +205,7 @@ localUnpackNar effs basePath (Nar fso) = localUnpackFSO basePath fso
 
     localUnpackFSO basePath fso = case fso of
 
-       Regular isExec bs -> do
+       Regular isExec _ bs -> do
          (narWriteFile effs) basePath bs
          p <- narGetPerms effs basePath
          (narSetPerms effs) basePath (p {executable = isExec == Executable})
@@ -222,6 +229,7 @@ localPackNar effs basePath = Nar <$> localPackFSO basePath
       case fType of
         (_,  True) -> return $ SymLink (T.pack path')
         (False, _) -> Regular <$> isExecutable effs path'
+                              <*> narFileSize effs path'
                               <*> narReadFile effs path'
         (True , _) -> fmap (Directory . Map.fromList) $ do
           fs <- narListDir effs path'
@@ -241,6 +249,7 @@ narEffectsIO = NarEffects {
   , narSetPerms   = setPermissions
   , narIsDir      = fmap isDirectory <$> getFileStatus
   , narIsSymLink  = pathIsSymbolicLink
+  , narFileSize   = fmap (fromIntegral . fileSize) <$> getFileStatus
   }
 
 

@@ -35,6 +35,11 @@ library
                      , hashable
                      , memory
                      , mtl
+                     -- , streaming
+                     -- , streaming-binary
+                     -- , streaming-bytestring
+                     -- , streaming-utils
+                     -- , streaming-attoparsec
                      , regex-base
                      , regex-tdfa-text
                      , text
@@ -45,6 +50,7 @@ library
   default-language:    Haskell2010
 
 test-suite format-tests
+   ghc-options: -rtsopts -fprof-auto
    type: exitcode-stdio-1.0
    main-is: Driver.hs
    other-modules:
