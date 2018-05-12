@@ -19,6 +19,7 @@ import           Data.Int
 import qualified Data.Map                    as Map
 import           Data.Maybe                  (fromMaybe, isJust)
 import qualified Data.Text                   as T
+import           GHC.Stats                   (getRTSStats, max_live_bytes)
 import           System.Directory            (removeFile)
 import           System.Environment          (getEnv)
 import qualified System.Process              as P
@@ -115,13 +116,13 @@ unit_streamLargeFileToNar =
   bracket (getBigFileSize >>= makeBigFile) (const rmFiles) $ \_ -> do
     nar <- localPackNar narEffectsIO bigFileName
     BSL.writeFile narFileName . runPut . put $ nar
+    assertBoundedMemory
     where
       bigFileName = "bigFile.bin"
       narFileName = "bigFile.nar"
       makeBigFile = \sz -> BSL.writeFile bigFileName
                            (BSL.take sz $ BSL.cycle "Lorem ipsum")
       rmFiles     = removeFile bigFileName >> removeFile narFileName
-      -- rmFiles'    = return ()
 
 
 -- ****************  Utilities  ************************
@@ -150,7 +151,16 @@ filesystemNixStore testErrorName n = do
       localPackNar narEffectsIO "testfile" >>= BSL.writeFile "hnix.nar" . runPut . putNar
 
       diffResult <- P.readProcess "diff" ["nixstorenar.nar", "hnix.nar"] ""
+
+      assertBoundedMemory
       HU.assertEqual testErrorName diffResult ""
+
+
+-- | Assert that GHC uses less than 100M memory at peak
+assertBoundedMemory :: IO ()
+assertBoundedMemory = do
+      bytes <- max_live_bytes <$> getRTSStats
+      bytes < 100 * 1000 * 1000 `shouldBe` True
 
 
 -- | Read the binary output of `nix-store --dump` for a filepath
