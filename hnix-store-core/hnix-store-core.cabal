@@ -27,11 +27,9 @@ library
                      , binary
                      , bytestring
                      , containers
-                     , cryptonite
+                     , cryptohash-sha256
                      , directory
                      , filepath
-                      -- Drop foundation when we can drop cryptonite <0.25
-                     , foundation
                      , hashable
                      , memory
                      , mtl

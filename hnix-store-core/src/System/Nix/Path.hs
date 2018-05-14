@@ -6,7 +6,6 @@ Maintainer  : Shea Levy <shea@shealevy.com>
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module System.Nix.Path
   ( FilePathPart(..)
-  , PathHashAlgo
   , Path(..)
   , SubstitutablePathInfo(..)
   , PathName(..)
@@ -14,9 +13,7 @@ module System.Nix.Path
   , pathName
   ) where
 
-import           Crypto.Hash               (Digest)
-import           Crypto.Hash.Algorithms    (SHA256)
-import           Crypto.Hash.Truncated     (Truncated)
+import           Crypto.Hash.Truncated
 import qualified Data.ByteArray            as B
 import           Data.Hashable             (Hashable (..), hashPtrWithSalt)
 import           Data.HashMap.Strict       (HashMap)
@@ -47,22 +44,16 @@ pathName n = case matchTest nameRegex n of
   False -> Nothing
 
 -- | The hash algorithm used for store path hashes.
-type PathHashAlgo = Truncated SHA256 20
+-- type PathHashAlgo = Truncated SHA256 20
 
 -- | A path in a store.
-data Path = Path !(Digest PathHashAlgo) !PathName
-
--- | Wrapper to defined a 'Hashable' instance for 'Digest'.
-newtype HashableDigest a = HashableDigest (Digest a)
-
-instance Hashable (HashableDigest a) where
-  hashWithSalt s (HashableDigest d) = unsafeDupablePerformIO $
-    B.withByteArray d $ \ptr -> hashPtrWithSalt ptr (B.length d) s
+-- data Path = Path !(Digest PathHashAlgo) !PathName
+data Path = Path !PathHash !PathName
 
 instance Hashable Path where
-  hashWithSalt s (Path digest name) =
+  hashWithSalt s (Path (PathHash digest) name) =
     s `hashWithSalt`
-    (HashableDigest digest) `hashWithSalt` name
+    digest `hashWithSalt` name
 
 
 -- | Information about substitutes for a 'Path'.
