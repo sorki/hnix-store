@@ -15,6 +15,8 @@ module System.Nix.StorePath
   , validStorePathName
   , -- * Rendering out 'StorePath's
     storePathToRawFilePath
+  , storePathToFilePath
+  , storePathToNarInfo
   , parsePath
   ) where
 

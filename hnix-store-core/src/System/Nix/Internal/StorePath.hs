@@ -150,14 +150,28 @@ storePathToRawFilePath StorePath {..} = BS.concat
     hashPart = encodeUtf8 $ encodeBase32 storePathHash
     name = encodeUtf8 $ unStorePathName storePathName
 
-storePathToNarinfo StorePath {..} = BS.concat
+-- | Render a 'StorePath' as a 'FilePath'.
+storePathToFilePath
+  :: StorePath
+  -> FilePath
+storePathToFilePath = BC.unpack . storePathToRawFilePath
+
+-- | Build `narinfo` suffix from `StorePath` which
+-- can be used to query binary caches.
+storePathToNarInfo
+  :: StorePath
+  -> BC.ByteString
+storePathToNarInfo StorePath {..} = BS.concat
     [ encodeUtf8 $ encodeBase32 storePathHash
     , ".narinfo"
     ]
 
 -- | Parse `StorePath` from `BC.ByteString`, checking
 -- that store directory matches `expectedRoot`.
-parsePath :: FilePath -> BC.ByteString -> Either String StorePath
+parsePath
+  :: FilePath
+  -> BC.ByteString
+  -> Either String StorePath
 parsePath expectedRoot x =
   let
     (rootDir, fname) = splitFileName . BC.unpack $ x
