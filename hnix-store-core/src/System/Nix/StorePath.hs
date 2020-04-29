@@ -18,6 +18,7 @@ module System.Nix.StorePath
   , storePathToFilePath
   , storePathToNarInfo
   , parsePath
+  , pathParser
   ) where
 
 import System.Nix.Internal.StorePath

@@ -31,6 +31,7 @@ library
                      , System.Nix.StorePathMetadata
                      , System.Nix.ValidPath
   build-depends:       base >=4.10 && <5
+                     , attoparsec
                      , base16-bytestring
                      , bytestring
                      , binary
@@ -71,6 +72,7 @@ test-suite format-tests
        tests
    build-depends:
        hnix-store-core
+     , attoparsec
      , base
      , base16-bytestring
      , base64-bytestring

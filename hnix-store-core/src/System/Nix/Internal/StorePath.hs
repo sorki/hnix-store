@@ -19,6 +19,7 @@ import System.Nix.Hash
   , decodeBase32
   , SomeNamedDigest
   )
+import System.Nix.Internal.Base32 (digits32)
 
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
@@ -27,13 +28,15 @@ import GHC.TypeLits (Symbol, KnownSymbol, symbolVal)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
+import qualified Data.Char
 import Data.Hashable (Hashable(..))
 import Data.HashSet (HashSet)
 import Data.Proxy (Proxy(..))
 
+import Data.Attoparsec.ByteString.Char8 (Parser, (<?>))
+import qualified Data.Attoparsec.ByteString.Char8 as P
 import System.FilePath (splitFileName)
 
-import Data.Char
 -- | A path in a Nix store.
 --
 -- From the Nix thesis: A store path is the full path of a store
@@ -113,20 +116,23 @@ makeStorePathName n = case validStorePathName n of
   True  -> Right $ StorePathName n
   False -> Left $ reasonInvalid n
 
+reasonInvalid :: Text -> String
 reasonInvalid n | n == ""            = "Empty name"
 reasonInvalid n | (T.length n > 211) = "Path too long"
 reasonInvalid n | (T.head n == '.')  = "Leading dot"
 reasonInvalid n | otherwise          = "Invalid character"
 
+validStorePathName :: Text -> Bool
 validStorePathName "" = False
 validStorePathName n  = (T.length n <= 211)
                         && T.head n /= '.'
-                        && T.all validChar n
-  where
-  validChar c = any ($ c) $
-    [ isAsciiLower -- 'a'..'z'
-    , isAsciiUpper -- 'A'..'Z'
-    , isDigit
+                        && T.all validStorePathNameChar n
+
+validStorePathNameChar :: Char -> Bool
+validStorePathNameChar c = any ($ c) $
+    [ Data.Char.isAsciiLower -- 'a'..'z'
+    , Data.Char.isAsciiUpper -- 'A'..'Z'
+    , Data.Char.isDigit
     ] ++
     map (==) "+-._?="
 
@@ -186,3 +192,31 @@ parsePath expectedRoot x =
       else Left $ unwords $ [ "Root store dir mismatch, expected ", expectedRoot, "got", rootDir']
   in
     StorePath <$> digest <*> name <*> storeDir
+
+pathParser :: FilePath -> Parser StorePath
+pathParser expectedRoot = do
+  P.string (BC.pack expectedRoot)
+    <?> "Store root mismatch" -- e.g. /nix/store
+
+  P.char '/'
+    <?> "Expecting path separator"
+
+  digest <- decodeBase32 . T.pack . BC.unpack
+    <$> P.takeWhile1 (\c -> c `elem` digits32)
+    <?> "Invalid Base32 part"
+
+  P.char '-'
+    <?> "Expecting dash (path name separator)"
+
+  c0 <- P.satisfy (\c -> c /= '.' && validStorePathNameChar c)
+    <?> "Leading path name character is a dot or invalid character"
+
+  rest <- P.takeWhile validStorePathNameChar
+    <?> "Path name contains invalid character"
+
+  let name = makeStorePathName
+              $ T.pack . BC.unpack
+              $ BC.cons c0 rest
+
+  either fail return
+    $ StorePath <$> digest <*> name <*> pure expectedRoot
