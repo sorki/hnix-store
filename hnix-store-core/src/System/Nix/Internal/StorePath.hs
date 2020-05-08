@@ -189,7 +189,7 @@ parsePath expectedRoot x =
     rootDir' = init rootDir
     storeDir = if expectedRoot == rootDir'
       then Right rootDir'
-      else Left $ unwords $ [ "Root store dir mismatch, expected ", expectedRoot, "got", rootDir']
+      else Left $ unwords $ [ "Root store dir mismatch, expected", expectedRoot, "got", rootDir']
   in
     StorePath <$> digest <*> name <*> storeDir
 
