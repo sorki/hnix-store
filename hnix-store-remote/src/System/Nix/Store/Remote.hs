@@ -72,8 +72,8 @@ addToStore
   => StorePathName
   -> FilePath
   -> Bool
-  -> (StorePath -> Bool)
-  -> RepairFlag
+  -> (FilePath -> Bool)
+  -> RepairFlag -- this is only needed for local store
   -> MonadStore StorePath
 addToStore name pth recursive _pathFilter _repair = do
 
