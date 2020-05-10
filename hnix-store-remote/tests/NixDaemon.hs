@@ -46,7 +46,7 @@ import           System.Nix.Hash
 import           System.Nix.StorePath
 import           System.Nix.ReadonlyStore
 import           System.Nix.Nar
-import qualified System.Nix.ValidPath        as VP
+import qualified System.Nix.StorePathMetadata as VP
 import           System.Nix.Store.Remote
 import           System.Nix.Store.Remote.Logger
 import           System.Nix.Store.Remote.Types
@@ -148,7 +148,7 @@ withPath action = do
 -- | dummy path, adds <tmp>/dummpy with "Hello World" contents
 dummy = do
   let Right n = makeStorePathName "dummy"
-  res <- addToStore n "dummy" False (Proxy :: Proxy 'SHA256) (pure True) False
+  res <- addToStore @SHA256 n "dummy" False (pure True) False
   return res
 
 invalidPath :: StorePath
@@ -162,7 +162,8 @@ withNar act = do
 
   let narContents = runPut $ putNar nar
       narHash = hashLazy @SHA256 narContents
-      narSize = BSL.length narContents
+      -- narSize vs narBytes
+      narBytes = BSL.length narContents
 
   deriver <- addTextToStore "some-deriver" "" (HS.fromList [])  False
 
@@ -172,16 +173,16 @@ withNar act = do
 
   addTempRoot path
 
-  let vp = VP.ValidPath
+  let vp = VP.StorePathMetadata
             { VP.path =  path
-            , VP.deriver = Just deriver
-            , VP.narHash = (encodeBase16 narHash)
+            , VP.deriverPath = Just deriver
+            , VP.narHash = SomeDigest narHash
             , VP.references = HS.empty
             , VP.registrationTime = now
-            , VP.narSize = fromIntegral narSize
-            , VP.ultimate = True
-            , VP.sigs = []
-            , VP.ca = ""
+            , VP.narBytes = Just $ fromIntegral narBytes
+            , VP.trust = VP.BuiltLocally
+            , VP.sigs = S.empty -- []
+            , VP.contentAddressableAddress = Nothing
             }
 
   addToStoreNar vp nar False False
@@ -227,7 +228,7 @@ spec_protocol = Hspec.around withNixDaemon $ do
       itRights "non-empty query" $ withPath $ \path -> queryAllValidPaths `shouldReturn` (HS.fromList [path])
 
     context "queryPathInfoUncached" $ do
-      itRights "queries path info" $ withPath $ queryPathInfoUncached
+      itRights "queries path info" $ withPath $ queryPathInfoUncached @SHA256
 
     context "ensurePath" $ do
       itRights "simple ensure" $ withPath $ ensurePath
@@ -277,7 +278,7 @@ spec_protocol = Hspec.around withNixDaemon $ do
       itRights "adds file to store" $ do
         fp <- liftIO $ writeSystemTempFile "addition" "lal"
         let Right n = makeStorePathName "tmp-addition"
-        res <- addToStore n fp False (Proxy :: Proxy 'SHA256) (pure True) False
+        res <- addToStore @SHA256 n fp False (pure True) False
         liftIO $ print res
 
     context "with dummy" $ do

@@ -43,6 +43,7 @@ import qualified Data.Binary.Put           as B
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Lazy      as BSL
 import qualified Data.Map.Strict           as M
+import qualified Data.Set
 import           Data.Proxy                (Proxy)
 import           Data.Text                 (Text)
 
@@ -52,14 +53,14 @@ import           System.Nix.Hash           (Digest, ValidAlgo)
 import           System.Nix.StorePath
 import           System.Nix.Hash
 import           System.Nix.Nar            (localPackNar, putNar, narEffectsIO, Nar)
-import           System.Nix.ValidPath
+import           System.Nix.StorePathMetadata
 
 import           System.Nix.Store.Remote.Binary
 import           System.Nix.Store.Remote.Types
 import           System.Nix.Store.Remote.Protocol
 import           System.Nix.Store.Remote.Util
 
-import Data.Text.Encoding (encodeUtf8)
+import qualified Data.Text.Encoding -- (encodeUtf8)
 
 type RepairFlag = Bool
 type CheckFlag = Bool
@@ -71,11 +72,10 @@ addToStore
   => StorePathName
   -> FilePath
   -> Bool
-  -> Proxy a
   -> (StorePath -> Bool)
   -> RepairFlag
   -> MonadStore StorePath
-addToStore name pth recursive _algoProxy pfilter repair = do
+addToStore name pth recursive _pathFilter _repair = do
 
   -- TODO: Is this lazy enough? We need `B.putLazyByteString bs` to stream `bs`
   bs  :: BSL.ByteString <- liftIO $ B.runPut . putNar <$> localPackNar narEffectsIO pth
@@ -92,8 +92,8 @@ addToStore name pth recursive _algoProxy pfilter repair = do
 
   sockGetPath
 
-addToStoreNar :: ValidPath -> Nar -> RepairFlag -> CheckSigsFlag -> MonadStore ()
-addToStoreNar ValidPath{..} nar repair checkSigs = do
+addToStoreNar :: StorePathMetadata -> Nar -> RepairFlag -> CheckSigsFlag -> MonadStore ()
+addToStoreNar StorePathMetadata{..} nar repair checkSigs = do
   -- after the command, protocol asks for data via Read message
   -- so we provide it here
   let n = B.runPut $ putNar nar
@@ -101,14 +101,23 @@ addToStoreNar ValidPath{..} nar repair checkSigs = do
 
   void $ runOpArgs AddToStoreNar $ do
     putPath path
-    maybe (putText "") (putPath) deriver
-    putText narHash
+    maybe (putText "") (putPath) deriverPath
+    let putNarHash :: SomeNamedDigest -> B.PutM ()
+        putNarHash (SomeDigest n) = putByteStringLen
+          $ BSL.fromStrict
+          $ Data.Text.Encoding.encodeUtf8
+          $ encodeBase32 n
+
+    putNarHash narHash
     putPaths references
     putTime registrationTime
-    putInt narSize
-    putBool ultimate
-    putTexts sigs
-    putText ca
+    -- XXX
+    maybe (error "NO NAR BYTES") putInt narBytes
+    putBool (trust == BuiltLocally)
+    -- XXX
+    putTexts [""]
+    -- XXX
+    putText ""
 
     putBool repair
     putBool (not checkSigs)
@@ -190,7 +199,7 @@ querySubstitutablePaths ps = do
     putPaths ps
   sockGetPaths
 
-queryPathInfoUncached :: StorePath -> MonadStore ValidPath
+queryPathInfoUncached :: forall a.NamedAlgo a => StorePath -> MonadStore StorePathMetadata
 queryPathInfoUncached path = do
   runOpArgs QueryPathInfo $ do
     putPath path
@@ -198,15 +207,30 @@ queryPathInfoUncached path = do
   valid <- sockGetBool
   unless valid $ error "Path is not valid"
 
-  deriver <- sockGetPathMay
-  narHash <- bsToText <$> sockGetStr
+  deriverPath <- sockGetPathMay
+
+  narHashText <- Data.Text.Encoding.decodeUtf8 <$> sockGetStr
+  let narHash = case decodeBase32 narHashText of
+        Left e -> error e
+        Right x -> SomeDigest @a x
+
   references <- sockGetPaths
   registrationTime <- sockGet getTime
-  narSize <- sockGetInt
+  narBytes <- Just <$> sockGetInt
   ultimate <- sockGetBool
-  sigs <- map bsToText <$> sockGetStrings
+
+  -- XXX
+  sigStrings <- map bsToText <$> sockGetStrings
+
+  let sigs = Data.Set.empty
+      contentAddressableAddress = Nothing
+
   ca <- bsToText <$> sockGetStr
-  return $ ValidPath {..}
+
+  let trust = if ultimate then BuiltLocally
+                          else BuiltElsewhere
+
+  return $ StorePathMetadata {..}
 
 queryReferrers :: StorePath -> MonadStore StorePathSet
 queryReferrers p = do
@@ -235,7 +259,7 @@ queryDerivationOutputNames p = do
 queryPathFromHashPart :: Digest StorePathHashAlgo -> MonadStore StorePath
 queryPathFromHashPart storePathHash = do
   runOpArgs QueryPathFromHashPart $
-    putByteStringLen $ BSL.fromStrict $ encodeUtf8 $ encodeBase32 storePathHash
+    putByteStringLen $ BSL.fromStrict $ Data.Text.Encoding.encodeUtf8 $ encodeBase32 storePathHash
   sockGetPath
 
 queryMissing :: StorePathSet -> MonadStore (StorePathSet, StorePathSet, StorePathSet, Integer, Integer)
@@ -253,7 +277,7 @@ queryMissing ps = do
 optimiseStore :: MonadStore ()
 optimiseStore = void $ simpleOp OptimiseStore
 
-syncWithGC ::MonadStore ()
+syncWithGC :: MonadStore ()
 syncWithGC = void $ simpleOp SyncWithGC
 
 -- returns True on errors
