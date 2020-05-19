@@ -44,7 +44,7 @@ library
                      , filepath
                      , hashable
                      , mtl
-                     , nix-derivation
+                     , nix-derivation >= 1.1.1 && <2
                      , saltine
                      , time
                      , text
