@@ -30,7 +30,7 @@ library
                      , text
                      , unix
                      , network
-                     , nix-derivation
+                     , nix-derivation >= 1.1.1 && <2
                      , mtl
                      , unordered-containers
                      , filepath
