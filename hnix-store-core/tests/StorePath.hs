@@ -5,12 +5,11 @@
 
 module StorePath where
 
-import qualified Data.ByteString.Char8            as BSC
-import qualified Data.Attoparsec.ByteString.Char8 as P
+import qualified Data.Attoparsec.Text.Lazy
 
 import           Test.Tasty.QuickCheck
 
-import           System.Nix.Internal.StorePath
+import           System.Nix.StorePath
 import           Arbitrary
 
 -- | Test that Nix(OS) like paths roundtrip
@@ -22,9 +21,9 @@ prop_storePathRoundtrip' x =
   (parsePath (storePathRoot x) $ storePathToRawFilePath x) === Right x
 
 prop_storePathRoundtripParser (_ :: NixLike) = \(NixLike x) ->
-  (P.parseOnly (pathParser (storePathRoot x))
-    $ storePathToRawFilePath x) === Right x
+  (Data.Attoparsec.Text.Lazy.parseOnly (pathParser (storePathRoot x))
+    $ storePathToText x) === Right x
 
 prop_storePathRoundtripParser' x =
-  (P.parseOnly (pathParser (storePathRoot x))
-    $ storePathToRawFilePath x) === Right x
+  (Data.Attoparsec.Text.Lazy.parseOnly (pathParser (storePathRoot x))
+    $ storePathToText x) === Right x

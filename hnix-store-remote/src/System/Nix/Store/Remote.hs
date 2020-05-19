@@ -47,8 +47,8 @@ import qualified Data.Set
 import           Data.Proxy                (Proxy)
 import           Data.Text                 (Text)
 
-import qualified System.Nix.Build          as Build
 
+import           System.Nix.Build          (BuildMode, BuildResult)
 import           System.Nix.Hash           (Digest, ValidAlgo)
 import           System.Nix.StorePath
 import           System.Nix.Hash
@@ -60,7 +60,7 @@ import           System.Nix.Store.Remote.Types
 import           System.Nix.Store.Remote.Protocol
 import           System.Nix.Store.Remote.Util
 
-import qualified Data.Text.Encoding -- (encodeUtf8)
+import qualified Data.Text.Encoding
 
 type RepairFlag = Bool
 type CheckFlag = Bool
@@ -150,7 +150,7 @@ addTempRoot :: StorePath -> MonadStore ()
 addTempRoot pn = do
   void $ simpleOpArgs AddTempRoot $ putPath pn
 
-buildPaths :: StorePathSet -> Build.BuildMode -> MonadStore ()
+buildPaths :: StorePathSet -> BuildMode -> MonadStore ()
 buildPaths ps bm = do
   void $ simpleOpArgs BuildPaths $ do
     putPaths ps

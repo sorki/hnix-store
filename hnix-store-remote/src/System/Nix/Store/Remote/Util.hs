@@ -16,7 +16,6 @@ import           Data.Time.Clock.POSIX
 import           Data.ByteString           (ByteString)
 import qualified Data.ByteString.Char8     as BSC
 import qualified Data.ByteString.Lazy      as BSL
-import qualified Data.HashSet              as HashSet
 
 import           Network.Socket.ByteString (recv, sendAll)
 
@@ -25,6 +24,8 @@ import           System.Nix.StorePath
 import           System.Nix.Store.Remote.Binary
 import           System.Nix.Store.Remote.Types
 
+import qualified Data.HashSet
+import qualified Data.Map
 
 genericIncremental :: (MonadIO m) => m (Maybe ByteString) -> Get a -> m a
 genericIncremental getsome parser = go decoder
@@ -105,13 +106,13 @@ getPath :: FilePath -> Get (Either String StorePath)
 getPath sd = parsePath sd <$> getByteStringLen
 
 getPaths :: FilePath -> Get StorePathSet
-getPaths sd = HashSet.fromList . rights . map (parsePath sd) <$> getByteStrings
+getPaths sd = Data.HashSet.fromList . rights . map (parsePath sd) <$> getByteStrings
 
 putPath :: StorePath -> Put
 putPath  = putByteStringLen . BSL.fromStrict . storePathToRawFilePath
 
 putPaths :: StorePathSet -> Put
-putPaths = putByteStrings . HashSet.toList .  HashSet.map (BSL.fromStrict . storePathToRawFilePath)
+putPaths = putByteStrings . Data.HashSet.toList . Data.HashSet.map (BSL.fromStrict . storePathToRawFilePath)
 
 putBool :: Bool -> Put
 putBool True  = putInt (1 :: Int)

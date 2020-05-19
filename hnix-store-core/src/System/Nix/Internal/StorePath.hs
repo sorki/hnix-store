@@ -33,9 +33,10 @@ import Data.Hashable (Hashable(..))
 import Data.HashSet (HashSet)
 import Data.Proxy (Proxy(..))
 
-import Data.Attoparsec.ByteString.Char8 (Parser, (<?>))
-import qualified Data.Attoparsec.ByteString.Char8 as P
-import System.FilePath (splitFileName)
+import Data.Attoparsec.Text.Lazy (Parser, (<?>))
+
+import qualified Data.Attoparsec.Text.Lazy
+import qualified System.FilePath
 
 -- | A path in a Nix store.
 --
@@ -162,6 +163,12 @@ storePathToFilePath
   -> FilePath
 storePathToFilePath = BC.unpack . storePathToRawFilePath
 
+-- | Render a 'StorePath' as a 'Text'.
+storePathToText
+  :: StorePath
+  -> Text
+storePathToText = T.pack . BC.unpack . storePathToRawFilePath
+
 -- | Build `narinfo` suffix from `StorePath` which
 -- can be used to query binary caches.
 storePathToNarInfo
@@ -180,7 +187,7 @@ parsePath
   -> Either String StorePath
 parsePath expectedRoot x =
   let
-    (rootDir, fname) = splitFileName . BC.unpack $ x
+    (rootDir, fname) = System.FilePath.splitFileName . BC.unpack $ x
     (digestPart, namePart) = T.breakOn "-" $ T.pack fname
     digest = decodeBase32 digestPart
     name = makeStorePathName . T.drop 1 $ namePart
@@ -195,28 +202,26 @@ parsePath expectedRoot x =
 
 pathParser :: FilePath -> Parser StorePath
 pathParser expectedRoot = do
-  P.string (BC.pack expectedRoot)
+  Data.Attoparsec.Text.Lazy.string (T.pack expectedRoot)
     <?> "Store root mismatch" -- e.g. /nix/store
 
-  P.char '/'
+  Data.Attoparsec.Text.Lazy.char '/'
     <?> "Expecting path separator"
 
-  digest <- decodeBase32 . T.pack . BC.unpack
-    <$> P.takeWhile1 (\c -> c `elem` digits32)
+  digest <- decodeBase32
+    <$> Data.Attoparsec.Text.Lazy.takeWhile1 (\c -> c `elem` digits32)
     <?> "Invalid Base32 part"
 
-  P.char '-'
+  Data.Attoparsec.Text.Lazy.char '-'
     <?> "Expecting dash (path name separator)"
 
-  c0 <- P.satisfy (\c -> c /= '.' && validStorePathNameChar c)
+  c0 <- Data.Attoparsec.Text.Lazy.satisfy (\c -> c /= '.' && validStorePathNameChar c)
     <?> "Leading path name character is a dot or invalid character"
 
-  rest <- P.takeWhile validStorePathNameChar
+  rest <- Data.Attoparsec.Text.Lazy.takeWhile validStorePathNameChar
     <?> "Path name contains invalid character"
 
-  let name = makeStorePathName
-              $ T.pack . BC.unpack
-              $ BC.cons c0 rest
+  let name = makeStorePathName $ T.cons c0 rest
 
   either fail return
     $ StorePath <$> digest <*> name <*> pure expectedRoot

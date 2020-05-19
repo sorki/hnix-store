@@ -14,10 +14,12 @@ module System.Nix.StorePath
   , unStorePathName
   , validStorePathName
   , -- * Rendering out 'StorePath's
-    storePathToRawFilePath
-  , storePathToFilePath
+    storePathToFilePath
+  , storePathToRawFilePath
+  , storePathToText
   , storePathToNarInfo
-  , parsePath
+  , -- * Parsing 'StorePath's
+    parsePath
   , pathParser
   ) where
 
