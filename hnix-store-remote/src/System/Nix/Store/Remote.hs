@@ -218,7 +218,9 @@ querySubstitutablePaths ps = do
     putPaths ps
   sockGetPaths
 
-queryPathInfoUncached :: forall a.NamedAlgo a => StorePath -> MonadStore StorePathMetadata
+queryPathInfoUncached :: forall a. (NamedAlgo a, ValidAlgo a)
+                      => StorePath
+                      -> MonadStore StorePathMetadata
 queryPathInfoUncached path = do
   runOpArgs QueryPathInfo $ do
     putPath path

@@ -105,7 +105,9 @@ mkNamedDigest name hash = case name of
   decode
     | size == base16Len = decodeBase16 hash
     | size == base32Len = decodeBase32 hash
-    -- | size == base64Len = decodeBase64 s -- TODO
+    {--
+    | size == base64Len = decodeBase64 s -- TODO
+    --}
     | otherwise = Left $ T.unpack hash ++ " is not a valid " ++ T.unpack name ++ " hash."
    where
     hsize = hashSize @a
