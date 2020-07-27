@@ -50,7 +50,7 @@ share [ mkPersist sqlSettings
   ValidPath
     path      StorePath
     hash      Text
-    regTime   NixUTCTime
+    regTime   NixUTCTime sql=registrationTime
     deriver   StorePath Maybe
     narBytes  Word64 sql=narSize
     ultimate  StorePathTrust Maybe
