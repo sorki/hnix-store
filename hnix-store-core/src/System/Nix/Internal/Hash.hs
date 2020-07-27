@@ -16,6 +16,7 @@ module System.Nix.Internal.Hash where
 import qualified Crypto.Hash.MD5        as MD5
 import qualified Crypto.Hash.SHA1       as SHA1
 import qualified Crypto.Hash.SHA256     as SHA256
+import qualified Crypto.Hash.SHA512     as SHA512
 import qualified Data.ByteString        as BS
 import qualified Data.ByteString.Base16 as Base16
 import           Data.Bits              (xor)
@@ -181,6 +182,12 @@ instance ValidAlgo 'SHA256 where
   initialize = SHA256.init
   update = SHA256.update
   finalize = Digest . SHA256.finalize
+
+instance ValidAlgo 'SHA512 where
+  type AlgoCtx 'SHA512 = SHA512.Ctx
+  initialize = SHA512.init
+  update = SHA512.update
+  finalize = Digest . SHA512.finalize
 
 -- | Reuses the underlying 'ValidAlgo' instance, but does a
 -- 'truncateDigest' at the end.

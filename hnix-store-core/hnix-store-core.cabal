@@ -40,6 +40,7 @@ library
                      , cryptohash-md5
                      , cryptohash-sha1
                      , cryptohash-sha256
+                     , cryptohash-sha512
                      , directory
                      , filepath
                      , hashable
