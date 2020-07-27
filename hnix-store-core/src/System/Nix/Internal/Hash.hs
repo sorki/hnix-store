@@ -19,6 +19,7 @@ import qualified Crypto.Hash.SHA256     as SHA256
 import qualified Crypto.Hash.SHA512     as SHA512
 import qualified Data.ByteString        as BS
 import qualified Data.ByteString.Base16 as Base16
+import qualified Data.ByteString.Base64 as Base64
 import           Data.Bits              (xor)
 import qualified Data.ByteString.Lazy   as BSL
 import qualified Data.Hashable          as DataHashable
@@ -82,14 +83,9 @@ instance NamedAlgo 'SHA256 where
   algoName = "sha256"
   hashSize = 32
 
-{-
 instance NamedAlgo 'SHA512 where
   algoName = "sha512"
   hashSize = 64
--}
-
-instance NamedAlgo 'SHA512 where
-  algoName = "sha512"
 
 -- | A digest whose 'NamedAlgo' is not known at compile time.
 data SomeNamedDigest = forall a . NamedAlgo a => SomeDigest (Digest a)
@@ -110,6 +106,7 @@ mkNamedDigest name hash = case name of
   "md5"    -> SomeDigest <$> decode @'MD5
   "sha1"   -> SomeDigest <$> decode @'SHA1
   "sha256" -> SomeDigest <$> decode @'SHA256
+  "sha512" -> SomeDigest <$> decode @'SHA512
   _        -> Left $ "Unknown hash name: " ++ T.unpack name
  where
   size = T.length hash
@@ -117,13 +114,13 @@ mkNamedDigest name hash = case name of
   decode
     | size == base16Len = decodeBase16 hash
     | size == base32Len = decodeBase32 hash
-    -- | size == base64Len = decodeBase64 s -- TODO
+    | size == base64Len = decodeBase64 hash
     | otherwise = Left $ T.unpack hash ++ " is not a valid " ++ T.unpack name ++ " hash."
    where
     hsize = hashSize @a
     base16Len = hsize * 2
     base32Len = ((hsize * 8 - 1) `div` 5) + 1;
-    -- base64Len = ((4 * hsize / 3) + 3) & ~3;
+    base64Len =  (hsize + 2 - ((hsize + 2) `mod` 3)) `div` 3 * 4
 
 -- | Hash an entire (strict) 'BS.ByteString' as a single call.
 --
@@ -143,6 +140,14 @@ hash bs =
 hashLazy :: forall a.ValidAlgo a => BSL.ByteString -> Digest a
 hashLazy bsl =
   finalize $ foldl' (update @a) (initialize @a) (BSL.toChunks bsl)
+
+-- | Encode a 'Digest' in the base-64 encoding.
+encodeBase64 :: Digest a -> T.Text
+encodeBase64 (Digest bs) = T.decodeUtf8 (Base64.encode bs)
+
+-- | Decode a 'Digest' in the base-64 encoding.
+decodeBase64 :: T.Text -> Either String (Digest a)
+decodeBase64 t = Digest <$> Base64.decode (T.encodeUtf8 t)
 
 -- | Encode a 'Digest' in the special Nix base-32 encoding.
 encodeBase32 :: Digest a -> T.Text
