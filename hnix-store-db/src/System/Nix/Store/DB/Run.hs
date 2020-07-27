@@ -17,12 +17,13 @@ import           System.Nix.Store.DB.Schema
 import           System.Nix.Store.DB.Query
 
 
-
+{--
 memTest :: IO ()
 memTest = runner' ":memory:" $ do
   runMigration migrateAll
   queryAll
   return ()
+--}
 
 queryAll = (,,)
   <$> queryValidPaths
@@ -41,7 +42,7 @@ runner' con act = Database.Persist.Sqlite.runSqlite con act
 --runSystemSqliteDebug = runner "/nix/var/nix/db/db.sqlite"
 --runSystemSqlite :: (Control.Monad.Logger.MonadLogger m) =>
 --  (ReaderT SqlBackend (m t) (Control.Monad.Trans.Resource.ResourceT IO)) a -> IO a
-runSystemSqlite = runner' "/nix/var/nix/db/db.sqlite"
+runSystemSqlite = runner "/nix/var/nix/db/db.sqlite"
 
 test :: IO ()
 test = do
@@ -83,12 +84,6 @@ test = do
           print outputs
 
     return ()
-      {--
-      putStrLn $ "Referrers: "
-      putStrLn $ "Valid derivers: "
-      putStrLn $ "Derivation outputs: "
-      print re
-      --}
 
 -- | Query everything and for each valid path
 -- perform detailed queries
