@@ -142,9 +142,6 @@ addToStoreNar StorePathMetadata{..} nar repair checkSigs = do
       (putText
         . Data.Text.Lazy.toStrict
         . System.Nix.Store.Remote.Builders.buildContentAddressableAddress
-            -- this calls for changing the type of addToStoreNar
-            -- to forall a . (Valid/Named)Algo and a type app
-            @'System.Nix.Hash.SHA256
       )
       contentAddressableAddress
 
