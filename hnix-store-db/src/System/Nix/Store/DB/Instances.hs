@@ -70,18 +70,16 @@ instance PersistField ContentAddressableAddress where
     PersistText
     . Data.Text.Lazy.toStrict
     . System.Nix.Store.Remote.Builders.buildContentAddressableAddress
-      -- XXX
-        @'System.Nix.Hash.SHA256
 
   fromPersistValue (PersistText t) =
-{--
- -- XXX: DBG
- -- error $ show t
---}
-    Data.Bifunctor.first (\e -> error $ show (e, t)) -- Data.Text.pack)
+    Data.Bifunctor.first (\e -> error $ show (e, t))
+    -- This is to adjust type to Either Text ... for error path
+    -- but errors result in unhelpful
+    -- *** Exception: PersistMarshalError "Couldn't parse field `ca` from table `ValidPaths`. string"
+    -- so explicit error version above is used instead for now
+    --
+    -- Data.Bifunctor.first Data.Text.pack
     $ System.Nix.Store.Remote.Parsers.parseContentAddressableAddress
-      -- XXX
-        @'System.Nix.Hash.SHA256
         (Data.ByteString.Char8.pack $ Data.Text.unpack t)
 
 instance PersistFieldSql ContentAddressableAddress where
