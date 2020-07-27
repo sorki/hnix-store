@@ -97,6 +97,13 @@ instance Show SomeNamedDigest where
   show sd = case sd of
     SomeDigest (digest :: Digest hashType) -> T.unpack $ "SomeDigest " <> algoName @hashType <> ":" <> encodeBase32 digest
 
+-- XXX: due to persistent, probably wrong
+instance Eq SomeNamedDigest where
+  (==) (SomeDigest (Digest a)) (SomeDigest (Digest b)) = a == b
+
+instance Ord SomeNamedDigest where
+  (<=) (SomeDigest (Digest a)) (SomeDigest (Digest b)) = a <= b
+
 mkNamedDigest :: Text -> Text -> Either String SomeNamedDigest
 mkNamedDigest name hash = case name of
   "md5"    -> SomeDigest <$> decode @'MD5
