@@ -1,3 +1,5 @@
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE TypeApplications    #-}
 {-# OPTIONS_GHC -fno-warn-orphans       #-}
 
 module System.Nix.Store.DB.Instances where
@@ -12,12 +14,17 @@ import Data.Time (UTCTime)
 import System.Nix.StorePath (StorePath, ContentAddressableAddress)
 import System.Nix.StorePathMetadata (StorePathTrust(..))
 
+import qualified Data.ByteString.Char8
+import qualified Data.Bifunctor
 import qualified Data.Text
-import qualified System.Nix.StorePath
+import qualified Data.Text.Lazy
 import qualified Data.Attoparsec.Text.Lazy
-
-
 import qualified Data.Time.Clock.POSIX
+
+import qualified System.Nix.Hash
+import qualified System.Nix.StorePath
+import qualified System.Nix.Store.Remote.Builders
+import qualified System.Nix.Store.Remote.Parsers
 
 instance PersistField StorePath where
   toPersistValue = PersistText . Data.Text.pack . show
@@ -57,3 +64,25 @@ instance PersistField NixUTCTime where
 
 instance PersistFieldSql NixUTCTime where
   sqlType _ = SqlInt64
+
+instance PersistField ContentAddressableAddress where
+  toPersistValue =
+    PersistText
+    . Data.Text.Lazy.toStrict
+    . System.Nix.Store.Remote.Builders.buildContentAddressableAddress
+      -- XXX
+        @'System.Nix.Hash.SHA256
+
+  fromPersistValue (PersistText t) =
+{--
+ -- XXX: DBG
+ -- error $ show t
+--}
+    Data.Bifunctor.first (\e -> error $ show (e, t)) -- Data.Text.pack)
+    $ System.Nix.Store.Remote.Parsers.parseContentAddressableAddress
+      -- XXX
+        @'System.Nix.Hash.SHA256
+        (Data.ByteString.Char8.pack $ Data.Text.unpack t)
+
+instance PersistFieldSql ContentAddressableAddress where
+  sqlType _ = SqlString
