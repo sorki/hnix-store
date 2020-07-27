@@ -78,7 +78,7 @@ queryAllDerivationOutputs = select $ from return
 queryOneValidDerivation :: (MonadIO m, MonadLogger m)
                         => SqlPersistT m ([Entity ValidPath])
 queryOneValidDerivation = select $ from $ \validPath -> do
-  where_ (validPath ^. ValidPathUltimate ==. (val BuiltLocally))
+  where_ (validPath ^. ValidPathUltimate ==. (val $ Just BuiltLocally))
   offset 100
   limit 1
   return validPath

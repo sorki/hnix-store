@@ -53,7 +53,7 @@ share [ mkPersist sqlSettings
     regTime   NixUTCTime
     deriver   StorePath Maybe
     narBytes  Word64 sql=narSize
-    ultimate  StorePathTrust
+    ultimate  StorePathTrust Maybe
     sigs      Text Maybe
     ca        ContentAddressableAddress Maybe
     deriving Eq Show Ord
