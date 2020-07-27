@@ -37,6 +37,7 @@ data HashAlgorithm
   = MD5
   | SHA1
   | SHA256
+  | SHA512
   | Truncated Nat HashAlgorithm
     -- ^ The hash algorithm obtained by truncating the result of the
     -- input 'HashAlgorithm' to the given number of bytes. See
@@ -72,6 +73,9 @@ instance NamedAlgo 'SHA1 where
 
 instance NamedAlgo 'SHA256 where
   algoName = "sha256"
+
+instance NamedAlgo 'SHA512 where
+  algoName = "sha512"
 
 -- | A digest whose 'NamedAlgo' is not known at compile time.
 data SomeNamedDigest = forall a . NamedAlgo a => SomeDigest (Digest a)
