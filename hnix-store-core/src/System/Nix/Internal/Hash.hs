@@ -80,6 +80,15 @@ instance NamedAlgo 'SHA512 where
 -- | A digest whose 'NamedAlgo' is not known at compile time.
 data SomeNamedDigest = forall a . NamedAlgo a => SomeDigest (Digest a)
 
+instance Eq SomeNamedDigest where
+  (==) (SomeDigest (Digest a)) (SomeDigest (Digest b)) = a == b
+
+instance Ord SomeNamedDigest where
+  (<=) (SomeDigest (Digest a)) (SomeDigest (Digest b)) = a <= b
+
+instance Show SomeNamedDigest where
+  show (SomeDigest a) = T.unpack $ encodeBase32 a
+
 -- | Hash an entire (strict) 'BS.ByteString' as a single call.
 --
 --   For example:
