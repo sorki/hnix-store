@@ -3,8 +3,6 @@ name: "Hackage, Cabal, Linux"
 on:
   pull_request:
   push:
-    branches:
-      - master
   schedule:
     - cron: "45 02 * * *"
 
