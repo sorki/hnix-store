@@ -22,6 +22,7 @@ jobs:
         # Also singleton also use is deliberate, it allows to reference the value in the further configuration & also leaves a name in the CI & preserves matrix flexibility for the future.
         packageRoot: [ hnix-store-core ]
         ghc: [ "9.0", "8.6" ]
+        cabal: [ "3.2" "3.4" "3.6" ]
     defaults:
       run:
         working-directory: "./${{ matrix.packageRoot }}"
