@@ -9,7 +9,7 @@ on:
     - cron: "45 02 * * *"
 
 env:
-  cabalConfig: --enable-tests --disable-optimization --enable-deterministic
+  cabalConfig: --enable-tests
 
 jobs:
 
