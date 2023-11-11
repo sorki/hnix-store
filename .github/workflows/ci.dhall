@@ -1,15 +1,27 @@
 let haskellCi =
-      https://raw.githubusercontent.com/sorki/github-actions-dhall/pending/haskell-ci.dhall
+      https://raw.githubusercontent.com/sorki/github-actions-dhall/main/haskell-ci.dhall
+
+let defSteps = haskellCi.defaultCabalSteps
 
 in    haskellCi.generalCi
-        haskellCi.matrixSteps
-        ( Some
-            { ghc =
-              [ haskellCi.GHC.GHC963
-              , haskellCi.GHC.GHC947
-              , haskellCi.GHC.GHC902
-              ]
-            , cabal = [ haskellCi.Cabal.Cabal310 ]
-            }
+        ( haskellCi.withNix
+            ( defSteps
+              with extraSteps.pre
+                   =
+                    defSteps.extraSteps.pre
+                  # [ haskellCi.installCachixStep "hnix-store"
+                    , haskellCi.BuildStep.NameIf
+                        { name =
+                            "Install sodium \${{ matrix.os }}, \${{ matrix.os == 'ubuntu-latest' }}"
+                        , run = "sudo apt install libsodium-dev"
+                        , `if` = "matrix.os == 'ubuntu-latest'"
+                        }
+                    ]
+            )
         )
+        haskellCi.DhallMatrix::{
+        , ghc =
+          [ haskellCi.GHC.GHC963, haskellCi.GHC.GHC947, haskellCi.GHC.GHC902 ]
+        , os = [ haskellCi.OS.Ubuntu, haskellCi.OS.MacOS ]
+        }
     : haskellCi.CI.Type
