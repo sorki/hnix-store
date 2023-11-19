@@ -46,14 +46,14 @@ jobs:
     - name: haddock all
       run: cabal haddock all
     - name: Build with Nix
-      run: "nix-build"
+      run: "nix-build --argstr compiler $(echo ghc${{ matrix.ghc }} | tr -d '.')"
     strategy:
       matrix:
         cabal:
         - '3.10'
         ghc:
         - '9.6.3'
-        - '9.4.7'
+        - '9.4.8'
         - '9.0.2'
         - '8.10.7'
         os:

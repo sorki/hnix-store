@@ -21,7 +21,7 @@ in    haskellCi.generalCi
         haskellCi.DhallMatrix::{
         , ghc =
           [ haskellCi.GHC.GHC963
-          , haskellCi.GHC.GHC947
+          , haskellCi.GHC.GHC948
           , haskellCi.GHC.GHC902
           , haskellCi.GHC.GHC8107
           ]
